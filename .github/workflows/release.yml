@@ -1,0 +1,113 @@
+# Release pipeline for Jodd.
+#
+# Trigger options:
+#   - Tag push (`git tag v0.2.0 && git push origin v0.2.0`) → real GitHub release
+#   - Manual dispatch from the Actions tab → draft release for testing
+#
+# Matrix targets:
+#   - macos-latest (Apple Silicon)  → .dmg / .app
+#   - macos-13     (Intel)          → .dmg / .app
+#   - windows-latest                → .msi / .exe
+#
+# Secrets required (Repo → Settings → Secrets and variables → Actions):
+#   GOOGLE_CLIENT_ID      (required — embedded into binary at compile time)
+#   GOOGLE_CLIENT_SECRET  (required — same)
+#
+# Optional secrets (for code signing — without them users see Gatekeeper /
+# SmartScreen warnings but the binary still runs):
+#   APPLE_CERTIFICATE             (base64 of the .p12 Developer ID cert)
+#   APPLE_CERTIFICATE_PASSWORD    (password for the .p12)
+#   APPLE_SIGNING_IDENTITY        ("Developer ID Application: Name (TEAMID)")
+#   APPLE_ID                      (Apple ID for notarization)
+#   APPLE_PASSWORD                (app-specific password for notarization)
+#   APPLE_TEAM_ID                 (Team ID)
+#   WINDOWS_CERTIFICATE           (base64 of the .pfx Windows code-signing cert)
+#   WINDOWS_CERTIFICATE_PASSWORD  (password for the .pfx)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'    # Apple Silicon
+            args: '--target aarch64-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+          # macOS Intel (macos-13, x86_64-apple-darwin) temporarily dropped to
+          # save Actions minutes (macOS bills 10×). Re-add when cutting a real
+          # Intel-Mac release.
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS runners need the cross-arch target explicitly.
+          targets: "${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}"
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build & bundle (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Auto-provided by GitHub Actions; scope follows `permissions:`
+          # at the job level (contents: write — enough to create a release).
+          # tauri-action reads this env var to attach build artifacts to
+          # the draft release; without it the action errors before bundling.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Embedded into the binary at compile time via src-tauri/build.rs.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          # macOS / Windows code signing intentionally left UNSET while we
+          # don't have certs. tauri-action checks "is env defined" not "is it
+          # non-empty", so passing empty `${{ secrets.APPLE_CERTIFICATE }}`
+          # values triggers the signing path with an empty cert → security
+          # import fails. When you get an Apple Developer cert / Windows
+          # cert, add the secrets in repo settings AND uncomment the env
+          # block below — tauri-action will pick them up automatically.
+          #
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # Empty tagName + releaseId means "use the pushed tag" when triggered
+          # by a `v*` tag, or create a draft release on manual dispatch.
+          tagName: "${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseName: "Jodd ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseBody: |
+            See the changelog for details.
+
+            **Install notes:**
+            - macOS: open with right-click → Open (first run only — Gatekeeper)
+            - Windows: SmartScreen may warn — click "More info" → "Run anyway"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
