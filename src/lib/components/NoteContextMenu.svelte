@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { accounts, notes, selectedNote, selectedFolder, refreshNotes, currentAccount, indexRemoveOnDelete, indexUpsertOnSave } from '../stores/notes';
+  import { accounts, notes, selectedNote, selectedFolder, refreshNotes, currentAccount, indexRemoveOnDelete, indexUpsertOnSave, noteTagsByAccount, getNoteTags, setNoteTags } from '../stores/notes';
   import type { Note } from '../types';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
@@ -369,6 +369,9 @@
       if (!accountId) return;
       await invoke('delete_note', { accountId, id: note.id, uuid: note.uuid });
       notes.update((ns) => ns.filter((n) => n.uuid !== note.uuid));
+      // Backend drops the note's note_tags rows; mirror that in the store so
+      // the sidebar tag counts update immediately.
+      setNoteTags(accountId, note.uuid, []);
       indexRemoveOnDelete(accountId, note.id);
       if ($selectedNote?.uuid === note.uuid) selectedNote.set(null);
     } catch (e) {
@@ -405,12 +408,18 @@
 
     const prevNotes = get(notes);
     const prevSelectedNote = get(selectedNote);
+    // Snapshot each note's tags so we can restore them if the backend rejects
+    // the batch (the backend clears note_tags as part of the delete).
+    const tagSnap = new Map(
+      uuids.map((u) => [u, getNoteTags(get(noteTagsByAccount), accountId, u)] as const),
+    );
 
     notes.update((ns) => ns.filter((x) => !uuids.includes(x.uuid)));
     if ($selectedNote && uuids.includes($selectedNote.uuid)) {
       selectedNote.set(null);
     }
     for (const n of batch) indexRemoveOnDelete(accountId, n.id);
+    for (const u of uuids) setNoteTags(accountId, u, []);
 
     try {
       await invoke<number>('delete_notes_batch', { accountId, uuids });
@@ -418,6 +427,7 @@
       console.error('batch delete failed', e);
       notes.set(prevNotes);
       selectedNote.set(prevSelectedNote);
+      for (const [u, tags] of tagSnap) setNoteTags(accountId, u, tags);
       alert(`Failed to delete ${batch.length} note(s): ${e}`);
     }
   }

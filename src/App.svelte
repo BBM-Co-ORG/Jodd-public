@@ -7,7 +7,7 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import NoteList from './lib/components/NoteList.svelte';
   import NoteEditor from './lib/components/NoteEditor.svelte';
-  import { isAuthenticated, notes, isLoading, isSaving, error, refreshNotes, accounts, currentAccount, selectedNote, selectedFolder, recentlySavedUuids, recentSaveTimestamp, noteIndex, hydratedFolders, markFolderHydrated } from './lib/stores/notes';
+  import { isAuthenticated, notes, isLoading, isSaving, error, refreshNotes, accounts, currentAccount, selectedNote, selectedFolder, recentlySavedUuids, recentSaveTimestamp, noteIndex, hydratedFolders, markFolderHydrated, selectedTags, setAccountNoteTags } from './lib/stores/notes';
   import type { MessageIndex } from './lib/types';
   import { get } from 'svelte/store';
   import type { Account } from './lib/types';
@@ -123,6 +123,49 @@
     }
   }
 
+  // Tag navigation, parallel to the folder block above. Selecting tags paints
+  // the UNION of their notes from the SQLite cache into $notes (one IPC, no
+  // Gmail); NoteList then narrows to AND/OR per the match mode. Paint depends
+  // only on WHICH tags are selected, not the mode — the union is a superset of
+  // both, so toggling AND/OR re-filters without a re-fetch. Folder and tag
+  // views are mutually exclusive — Sidebar.selectFolder clears the selection.
+  let lastTagKey = '';
+  $: {
+    const key = [...$selectedTags].sort().join('');
+    if (key !== lastTagKey) {
+      lastTagKey = key;
+      if ($isAuthenticated && $selectedTags.size > 0) {
+        const acctNow = get(currentAccount);
+        if (acctNow) paintTagsFromCache(acctNow, [...$selectedTags]);
+      }
+    }
+  }
+
+  // Ensure every note carrying any selected tag is present and fresh in $notes.
+  // Unlike the folder paint we don't drop anything — folder notes stay put;
+  // they just won't match the tag filter. Existing copies of these uuids are
+  // replaced with the cache rows so the list shows current content.
+  async function paintTagsFromCache(accountId: string, tags: string[]) {
+    if (tags.length === 0) return;
+    try {
+      const cached = await invoke<any[]>('list_cached_notes_with_tags', {
+        accountId,
+        tags,
+      });
+      if (cached.length === 0) return;
+      const byUuid = new Set(cached.map((n: any) => n.uuid));
+      notes.update((ns) => {
+        const kept = ns.filter(
+          (n) => !(n.account_id === accountId && byUuid.has(n.uuid)),
+        );
+        return [...kept, ...cached];
+      });
+      reconcileSelection(get(notes));
+    } catch (e) {
+      console.error('paintTagsFromCache failed', e);
+    }
+  }
+
   // Doctrine-compliant navigation: replace just this folder's notes with
   // the SQLite snapshot, in one synchronous IPC. Survivors (tmp: blanks
   // and notes saved within the last 30s) are preserved exactly as
@@ -176,6 +219,10 @@
       // Phase C — fast index pass first: every account's {msg_id, label}
       // list. This is what populates the sidebar counts. No bodies yet.
       await indexAllAccounts();
+      // Tags are Jodd-local SQLite state — load each account's full tag map
+      // so the sidebar Tags section and note chips are populated on cold
+      // start, before any Gmail fetch. Cheap, pure-local; failures log.
+      await loadTags();
       // Cross-Jodd pin sync: pull each account's meta_label sidecars and
       // apply pin state to the cache. Runs in parallel across accounts —
       // each one only hits meta_label (small, scoped) so this completes
@@ -507,6 +554,25 @@
       return m;
     });
     for (const id of authLost) await handleAuthLoss(id);
+  }
+
+  // Load every account's Jodd-local tag map (uuid → tags) from SQLite into the
+  // store. Parallel across accounts; failures log but never block cold start.
+  async function loadTags() {
+    const accountList = get(accounts);
+    if (accountList.length === 0) return;
+    await Promise.allSettled(
+      accountList.map(async (a) => {
+        try {
+          const rows = await invoke<{ uuid: string; tag: string }[]>('list_note_tags', {
+            accountId: a.id,
+          });
+          setAccountNoteTags(a.id, rows);
+        } catch (e) {
+          console.warn(`list_note_tags failed for ${a.id}:`, e);
+        }
+      }),
+    );
   }
 
   // Phase C background sweep: walk every folder in every account, hydrating

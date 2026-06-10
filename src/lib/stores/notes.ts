@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 import type { Note, Folder, Account, MessageIndex } from '../types';
 
 export const isAuthenticated = writable<boolean>(false);
@@ -49,6 +49,96 @@ export function markFolderHydrated(accountId: string, folderPath: string) {
     m.set(accountId, set);
     return m;
   });
+}
+
+// ─── Tags (Jodd-local) ──────────────────────────────────────────────────
+// selectedTags drives a multi-tag-filtered NoteList view, mutually exclusive
+// with folder navigation: selecting a folder clears it (see
+// Sidebar.selectFolder), and a non-empty set takes precedence in NoteList's
+// filter. tagMatchMode picks how multiple selected tags combine: AND (note has
+// every selected tag) or OR (note has any). Single tag → both modes coincide.
+export const selectedTags = writable<Set<string>>(new Set());
+export const tagMatchMode = writable<'AND' | 'OR'>('AND');
+
+// Toggle a tag in/out of the selection. New Set each time so Svelte's
+// reference-equality reactivity fires.
+export function toggleSelectedTag(tag: string) {
+  selectedTags.update((s) => {
+    const next = new Set(s);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    return next;
+  });
+}
+
+export function clearSelectedTags() {
+  selectedTags.set(new Set());
+}
+
+// account → (uuid → tags[]). The frontend's single source of truth for tags,
+// loaded from the `list_note_tags` command — complete for the account even
+// before note bodies hydrate (the backend index lives in SQLite). Chips read
+// from it; the tag cloud below derives from it.
+export const noteTagsByAccount = writable<Map<string, Map<string, string[]>>>(new Map());
+
+// Derived tag cloud: per account, every tag with the count of notes carrying
+// it, sorted alphabetically. Recomputed automatically whenever the map above
+// changes (optimistic add/remove included), so the sidebar stays consistent
+// without a separate count structure to keep in sync.
+export const tagsByAccount = derived(noteTagsByAccount, ($m) => {
+  const out = new Map<string, { tag: string; count: number }[]>();
+  for (const [accountId, uuidMap] of $m) {
+    const counts = new Map<string, number>();
+    for (const tags of uuidMap.values())
+      for (const t of tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    out.set(
+      accountId,
+      [...counts.entries()]
+        .map(([tag, count]) => ({ tag, count }))
+        .sort((a, b) => a.tag.localeCompare(b.tag)),
+    );
+  }
+  return out;
+});
+
+// Replace the full tag map for one account — cold-start / refresh load from
+// the `list_note_tags` command's flat (uuid, tag) rows.
+export function setAccountNoteTags(
+  accountId: string,
+  entries: { uuid: string; tag: string }[],
+) {
+  noteTagsByAccount.update((m) => {
+    const inner = new Map<string, string[]>();
+    for (const { uuid, tag } of entries) {
+      const arr = inner.get(uuid) ?? [];
+      arr.push(tag);
+      inner.set(uuid, arr);
+    }
+    m.set(accountId, inner);
+    return m;
+  });
+}
+
+// Set one note's full tag list (used for optimistic add/remove AND rollback —
+// pass the prior list to undo). Counts re-derive automatically.
+export function setNoteTags(accountId: string, uuid: string, tags: string[]) {
+  noteTagsByAccount.update((m) => {
+    const inner = m.get(accountId) ?? new Map<string, string[]>();
+    if (tags.length === 0) inner.delete(uuid);
+    else inner.set(uuid, [...tags].sort((a, b) => a.localeCompare(b)));
+    m.set(accountId, inner);
+    return m;
+  });
+}
+
+// Read one note's current tags out of a noteTagsByAccount snapshot.
+export function getNoteTags(
+  map: Map<string, Map<string, string[]>>,
+  accountId: string | undefined | null,
+  uuid: string,
+): string[] {
+  if (!accountId) return [];
+  return map.get(accountId)?.get(uuid) ?? [];
 }
 
 // Function pointer set by App.svelte; lets any component trigger a refresh

@@ -688,6 +688,14 @@ async fn list_notes(
             Ok(_) => {}
             Err(e) => log!("list_notes: prune failed: {}", e),
         }
+        // Tags are keyed by uuid; once a note is pruned its tag rows are
+        // orphans. Display queries JOIN against notes so they're already
+        // invisible, but sweep them so the table doesn't accumulate.
+        match state.db.prune_orphan_tags(&account_id) {
+            Ok(n) if n > 0 => log!("list_notes: pruned {} orphan tag row(s)", n),
+            Ok(_) => {}
+            Err(e) => log!("list_notes: prune orphan tags failed: {}", e),
+        }
     }
 
     // ── Pin sidecar pull reconciliation ────────────────────────────────
@@ -987,6 +995,116 @@ async fn set_pin_batch(
         account_id, touched, uuids.len(), pinned
     );
     Ok(touched)
+}
+
+// ─── Tags (Jodd-local, mirrors Pin wave 1) ───────────────────────────────────
+//
+// Tags live ONLY in SQLite (the note_tags table), never in the note body, so
+// they never collide with `#` in URLs/code and never round-trip to Apple Notes
+// (which has no tagging). Pure local-first: each command is a single SQLite
+// write/read with no Gmail involvement and no worker path.
+
+#[derive(serde::Serialize)]
+struct TagCount {
+    tag: String,
+    count: i64,
+}
+
+#[derive(serde::Serialize)]
+struct NoteTag {
+    uuid: String,
+    tag: String,
+}
+
+/// Canonical stored form of a tag, or None if it has no usable content.
+/// Trims, lowercases, and drops whitespace, control chars, and every '#'.
+/// Unicode-friendly on purpose: any letter/digit/mark survives (Thai, CJK,
+/// etc.) — only structurally-bad chars are removed. Lowercasing prevents
+/// `#Work`/`#work` fragmenting the tag cloud (no-op for scripts without case).
+/// Must stay in lockstep with normalizeTagClient in NoteEditor.svelte so the
+/// optimistic UI value equals what's stored.
+fn normalize_tag(raw: &str) -> Option<String> {
+    let cleaned: String = raw
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control() && *c != '#')
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// Add a tag to a note. Returns the normalized form so the frontend can
+/// reconcile its optimistic value with what was actually stored.
+#[tauri::command]
+async fn add_tag(
+    account_id: String,
+    uuid: String,
+    tag: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let norm = normalize_tag(&tag).ok_or_else(|| format!("Invalid tag: {:?}", tag))?;
+    state.db.add_tag(&account_id, &uuid, &norm).map_err(|e| e.to_string())?;
+    log!("add_tag: account={} uuid={} tag={}", account_id, uuid, norm);
+    Ok(norm)
+}
+
+/// Remove a tag from a note.
+#[tauri::command]
+async fn remove_tag(
+    account_id: String,
+    uuid: String,
+    tag: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let norm = normalize_tag(&tag).unwrap_or_else(|| tag.clone());
+    state.db.remove_tag(&account_id, &uuid, &norm).map_err(|e| e.to_string())?;
+    log!("remove_tag: account={} uuid={} tag={}", account_id, uuid, norm);
+    Ok(())
+}
+
+/// Every tag for an account with its note count — drives the sidebar.
+#[tauri::command]
+async fn list_tags(
+    account_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TagCount>, String> {
+    let rows = state.db.list_all_tags(&account_id).map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|(tag, count)| TagCount { tag, count }).collect())
+}
+
+/// (uuid, tag) for every tagged note — the frontend folds this into a
+/// uuid → tags[] map for rendering chips.
+#[tauri::command]
+async fn list_note_tags(
+    account_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<NoteTag>, String> {
+    let rows = state.db.list_all_note_tags(&account_id).map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|(uuid, tag)| NoteTag { uuid, tag }).collect())
+}
+
+/// Cached notes carrying ANY of `tags` (the union). Pure local read — the
+/// tag-navigation parallel of `list_cached_notes_in_folder`. The frontend
+/// narrows the union to AND/OR per the active match mode, so loading the
+/// union here serves either mode without a re-query on toggle.
+#[tauri::command]
+async fn list_cached_notes_with_tags(
+    account_id: String,
+    tags: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<gmail::Note>, String> {
+    let norm: Vec<String> = tags
+        .iter()
+        .filter_map(|t| normalize_tag(t))
+        .collect();
+    let cached = state.db
+        .list_notes_with_tags(&account_id, &norm)
+        .map_err(|e| e.to_string())?;
+    Ok(cached.into_iter().map(|c| c.to_frontend_note()).collect())
 }
 
 // ─── Folder management ──────────────────────────────────────────────────────
@@ -2294,6 +2412,11 @@ pub fn run() {
             delete_notes_batch,
             set_pin,
             set_pin_batch,
+            add_tag,
+            remove_tag,
+            list_tags,
+            list_note_tags,
+            list_cached_notes_with_tags,
             list_folders,
             create_folder,
             rename_folder,

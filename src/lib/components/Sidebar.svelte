@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { notes, selectedFolder, selectedNote, isAuthenticated, accounts, currentAccount, refreshNotes, noteIndex, hydratedFolders, indexRewriteOnFolderRename } from '../stores/notes';
+  import { notes, selectedFolder, selectedNote, isAuthenticated, accounts, currentAccount, refreshNotes, noteIndex, hydratedFolders, indexRewriteOnFolderRename, selectedTags, tagMatchMode, toggleSelectedTag, clearSelectedTags, tagsByAccount } from '../stores/notes';
   import type { Note, Account, DedupSummary } from '../types';
   import DupReviewModal from './DupReviewModal.svelte';
   import AccountSettings from './AccountSettings.svelte';
@@ -283,7 +283,23 @@
     if ($currentAccount !== accountId) {
       currentAccount.set(accountId);
     }
+    // Folder and tag views are mutually exclusive — entering a folder leaves
+    // any active tag filter.
+    clearSelectedTags();
     selectedFolder.set(path);
+    selectedNote.set(null);
+  }
+
+  // Toggle a tag in/out of the multi-tag filter. Parallel to selectFolder;
+  // App.svelte's $selectedTags reactive paints the union from cache, and
+  // NoteList narrows to AND/OR. Tags are per-account, so switching account
+  // starts a fresh selection.
+  function selectTag(accountId: string, tag: string) {
+    if ($currentAccount !== accountId) {
+      currentAccount.set(accountId);
+      clearSelectedTags();
+    }
+    toggleSelectedTag(tag);
     selectedNote.set(null);
   }
 
@@ -834,7 +850,7 @@
              of label. Matches Apple Notes' top-of-account aggregate view. -->
         <div
           class="folder-item"
-          class:active={$selectedFolder === '__ALL__' && $currentAccount === acct.id}
+          class:active={$selectedTags.size === 0 && $selectedFolder === '__ALL__' && $currentAccount === acct.id}
           style="padding-left: 16px"
           role="button"
           tabindex="0"
@@ -850,7 +866,7 @@
             {@const hasKids = rowHasChildren(rowsByAccount[acct.id] ?? [], row.path)}
             <div
               class="folder-item"
-              class:active={$selectedFolder === row.path && $currentAccount === acct.id}
+              class:active={$selectedTags.size === 0 && $selectedFolder === row.path && $currentAccount === acct.id}
               style="padding-left: {8 + row.depth * 14}px"
               role="button"
               tabindex="0"
@@ -876,6 +892,47 @@
             </div>
           {/if}
         {/each}
+        <!-- Tags section: Jodd-local, parallel to folders. Click filters the
+             NoteList to notes carrying the tag. Hidden when the account has
+             no tags. -->
+        {#if ($tagsByAccount.get(acct.id) ?? []).length > 0}
+          <div class="tags-header">
+            <span>Tags</span>
+            {#if $selectedTags.size > 0 && $currentAccount === acct.id}
+              <span class="tag-controls">
+                {#if $selectedTags.size > 1}
+                  <button
+                    type="button"
+                    class="tag-mode"
+                    title="Match notes with ALL (AND) or ANY (OR) of the selected tags"
+                    onclick={() => tagMatchMode.update((m) => (m === 'AND' ? 'OR' : 'AND'))}
+                  >{$tagMatchMode}</button>
+                {/if}
+                <button
+                  type="button"
+                  class="tag-clear"
+                  title="Clear tag filter"
+                  onclick={() => clearSelectedTags()}
+                >clear</button>
+              </span>
+            {/if}
+          </div>
+          {#each $tagsByAccount.get(acct.id) ?? [] as t (t.tag)}
+            <div
+              class="folder-item tag-item"
+              class:active={$selectedTags.has(t.tag) && $currentAccount === acct.id}
+              style="padding-left: 16px"
+              role="button"
+              tabindex="0"
+              onclick={() => selectTag(acct.id, t.tag)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTag(acct.id, t.tag); } }}
+            >
+              <span class="folder-icon">🏷️</span>
+              <span class="folder-name">{t.tag}</span>
+              <span class="folder-count">{t.count}</span>
+            </div>
+          {/each}
+        {/if}
       </div>
     {/each}
   </nav>
@@ -1218,6 +1275,58 @@
     background: rgba(0,0,0,0.08);
     padding: 1px 6px;
     border-radius: 10px;
+  }
+
+  .tags-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 8px 0 2px;
+    padding: 2px 12px 2px 16px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #b0a99a;
+  }
+
+  .tag-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .tag-mode {
+    border: 1px solid #d8b25e;
+    background: #f3e4c0;
+    color: #6b5320;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0 5px;
+    border-radius: 8px;
+    cursor: pointer;
+    line-height: 1.5;
+  }
+
+  .tag-mode:hover {
+    background: #ead6a4;
+  }
+
+  .tag-clear {
+    border: none;
+    background: transparent;
+    color: #b0a99a;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+
+  .tag-clear:hover {
+    color: #c0392b;
   }
 
   .sidebar-footer {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { notes, selectedFolder, selectedNote, isLoading, refreshNotes, currentAccount, selectedUuids, clearSelectedUuids } from '../stores/notes';
+  import { notes, selectedFolder, selectedNote, isLoading, refreshNotes, currentAccount, selectedUuids, clearSelectedUuids, selectedTags, tagMatchMode, toggleSelectedTag, noteTagsByAccount, getNoteTags } from '../stores/notes';
   import type { Note } from '../types';
   import NoteContextMenu from './NoteContextMenu.svelte';
 
@@ -113,9 +113,24 @@
     const inAccount = (n: Note) => n.account_id === $currentAccount;
     let base: Note[];
     if (!q) {
-      base = $selectedFolder === '__ALL__'
-        ? $notes.filter(inAccount)
-        : $notes.filter((n) => inAccount(n) && n.label === $selectedFolder);
+      if ($selectedTags.size > 0) {
+        // Tag view takes precedence over the folder selection. AND = note has
+        // every selected tag; OR = note has any. App.paintTagsFromCache has
+        // already loaded the union of these tags' notes into $notes.
+        const sel = [...$selectedTags];
+        const mode = $tagMatchMode;
+        base = $notes.filter((n) => {
+          if (!inAccount(n)) return false;
+          const tags = getNoteTags($noteTagsByAccount, n.account_id, n.uuid);
+          return mode === 'AND'
+            ? sel.every((t) => tags.includes(t))
+            : sel.some((t) => tags.includes(t));
+        });
+      } else {
+        base = $selectedFolder === '__ALL__'
+          ? $notes.filter(inAccount)
+          : $notes.filter((n) => inAccount(n) && n.label === $selectedFolder);
+      }
     } else {
       base = $notes.filter((n) => {
         if (!inAccount(n)) return false;
@@ -329,6 +344,19 @@
               <span class="note-date">{formatDate(note.date)}</span>
               <span class="note-preview">{stripHtml(note.body_html)}</span>
             </div>
+            {#if getNoteTags($noteTagsByAccount, note.account_id, note.uuid).length > 0}
+              <div class="note-tags">
+                {#each getNoteTags($noteTagsByAccount, note.account_id, note.uuid) as tag (tag)}
+                  <button
+                    type="button"
+                    class="note-tag-chip"
+                    class:active={$selectedTags.has(tag)}
+                    onclick={(e) => { e.stopPropagation(); toggleSelectedTag(tag); }}
+                    title="Filter by #{tag}"
+                  >#{tag}</button>
+                {/each}
+              </div>
+            {/if}
           </div>
         </li>
       {/each}
@@ -535,6 +563,33 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .note-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .note-tag-chip {
+    font-size: 10px;
+    line-height: 1.4;
+    color: #6b6150;
+    background: rgba(0, 0, 0, 0.06);
+    border: none;
+    padding: 1px 7px;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+
+  .note-tag-chip:hover {
+    background: rgba(0, 0, 0, 0.12);
+  }
+
+  .note-tag-chip.active {
+    background: #d8b25e;
+    color: #3a2f12;
   }
 
   .empty-state {

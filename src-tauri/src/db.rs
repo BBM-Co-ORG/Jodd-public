@@ -245,6 +245,25 @@ impl Db {
                  ALTER TABLE notes ADD COLUMN pin_dirty INTEGER NOT NULL DEFAULT 0;
                  CREATE INDEX idx_notes_pin_dirty ON notes (pin_dirty) WHERE pin_dirty = 1;",
             ),
+            (
+                5,
+                // Tag support. Jodd-local only (like Pin wave 1) — tags are NOT
+                // stored in the note body and never round-trip to Apple Notes
+                // (which has no tagging). Many-per-note, so a join table rather
+                // than a column. Keyed by (account_id, uuid) to align with the
+                // notes PK (uuid, account_id). `tag` is pre-normalized by the
+                // write path: trimmed, leading '#' stripped, lowercased,
+                // charset [a-z0-9_-]. The (account_id, tag) index covers both
+                // the "count notes per tag" sidebar query and the "notes
+                // carrying tag X" filter.
+                "CREATE TABLE note_tags (
+                    account_id TEXT NOT NULL,
+                    uuid TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    PRIMARY KEY (account_id, uuid, tag)
+                );
+                CREATE INDEX idx_note_tags_tag ON note_tags (account_id, tag);",
+            ),
         ];
         for (v, sql) in migrations {
             if !applied.contains(v) {
@@ -456,6 +475,12 @@ impl Db {
             "DELETE FROM notes WHERE uuid = ?1 AND account_id = ?2",
             params![uuid, account_id],
         )?;
+        // Tags are Jodd-local metadata keyed by (account_id, uuid); drop them
+        // with the note so they don't linger as orphans.
+        conn.execute(
+            "DELETE FROM note_tags WHERE uuid = ?1 AND account_id = ?2",
+            params![uuid, account_id],
+        )?;
         Ok(())
     }
 
@@ -564,6 +589,16 @@ impl Db {
             )?;
             for uuid in uuids {
                 touched += stmt.execute(params![now, uuid, account_id])?;
+            }
+        }
+        {
+            // Same as mark_deleted: drop each deleted note's Jodd-local tags so
+            // the sidebar reflects the deletion immediately.
+            let mut tstmt = tx.prepare(
+                "DELETE FROM note_tags WHERE uuid = ?1 AND account_id = ?2",
+            )?;
+            for uuid in uuids {
+                tstmt.execute(params![uuid, account_id])?;
             }
         }
         tx.commit()?;
@@ -755,6 +790,13 @@ impl Db {
              WHERE uuid = ?2 AND account_id = ?3",
             params![now_ms(), uuid, account_id],
         )?;
+        // Drop the note's tags now so the sidebar tag counts update the moment
+        // the user deletes — the row itself lingers as deleted_pending until the
+        // worker trashes it on Gmail, but its tags are Jodd-local and gone.
+        conn.execute(
+            "DELETE FROM note_tags WHERE uuid = ?1 AND account_id = ?2",
+            params![uuid, account_id],
+        )?;
         Ok(())
     }
 
@@ -866,6 +908,120 @@ impl Db {
              FROM notes WHERE uuid = ?1 AND account_id = ?2",
         )?;
         stmt.query_row(params![uuid, account_id], row_to_note).optional()
+    }
+
+    // ─── Tags (Jodd-local, mirrors Pin wave 1) ────────────────────────────
+    // Tags live ONLY here, never in the note body. The `tag` argument is
+    // assumed already normalized by the command layer (trim, strip leading
+    // '#', lowercase, charset [a-z0-9_-]).
+
+    /// Add one tag to a note. Idempotent.
+    pub fn add_tag(&self, account_id: &str, uuid: &str, tag: &str) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO note_tags (account_id, uuid, tag) VALUES (?1, ?2, ?3)",
+            params![account_id, uuid, tag],
+        )?;
+        Ok(())
+    }
+
+    /// Remove one tag from a note.
+    pub fn remove_tag(&self, account_id: &str, uuid: &str, tag: &str) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM note_tags WHERE account_id = ?1 AND uuid = ?2 AND tag = ?3",
+            params![account_id, uuid, tag],
+        )?;
+        Ok(())
+    }
+
+    /// Every tag for an account with the count of notes carrying it, ordered
+    /// alphabetically. Drives the sidebar Tags section. The JOIN against
+    /// `notes` excludes deleted-pending notes AND any orphan tag rows whose
+    /// note no longer exists, so the cloud is always consistent with reality.
+    pub fn list_all_tags(&self, account_id: &str) -> SqlResult<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT t.tag, COUNT(*)
+             FROM note_tags t
+             JOIN notes n ON n.account_id = t.account_id AND n.uuid = t.uuid
+             WHERE t.account_id = ?1 AND n.sync_state != 'deleted_pending'
+             GROUP BY t.tag
+             ORDER BY t.tag",
+        )?;
+        let rows = stmt.query_map(params![account_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        rows.collect()
+    }
+
+    /// (uuid, tag) for every tagged, non-deleted note in an account. The
+    /// frontend folds this into a uuid → tags[] map for rendering chips.
+    pub fn list_all_note_tags(&self, account_id: &str) -> SqlResult<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT t.uuid, t.tag
+             FROM note_tags t
+             JOIN notes n ON n.account_id = t.account_id AND n.uuid = t.uuid
+             WHERE t.account_id = ?1 AND n.sync_state != 'deleted_pending'
+             ORDER BY t.uuid, t.tag",
+        )?;
+        let rows = stmt.query_map(params![account_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        rows.collect()
+    }
+
+    /// Cached notes carrying ANY of `tags` (the union), distinct. The
+    /// multi-tag navigation loads this union into the store; the frontend
+    /// then narrows to AND (all tags) or OR (any tag) per the match mode —
+    /// the union is a superset of both, so one load serves either mode.
+    pub fn list_notes_with_tags(
+        &self,
+        account_id: &str,
+        tags: &[String],
+    ) -> SqlResult<Vec<CachedNote>> {
+        if tags.is_empty() {
+            return Ok(vec![]);
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = std::iter::repeat("?")
+            .take(tags.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT DISTINCT n.uuid, n.account_id, n.id, n.title, n.body_html, n.date,
+                    n.x_mail_created_date, n.label, n.local_version, n.remote_version,
+                    n.sync_state, n.last_synced_at, n.last_local_modified_at,
+                    n.last_remote_modified_at, n.pinned, n.meta_msg_id, n.pin_dirty
+             FROM notes n
+             JOIN note_tags t ON t.account_id = n.account_id AND t.uuid = n.uuid
+             WHERE n.account_id = ? AND n.sync_state != 'deleted_pending'
+               AND t.tag IN ({})",
+            placeholders
+        );
+        // First bind param is account_id, then every tag. Uniform String type
+        // so params_from_iter can take them all.
+        let mut binds: Vec<String> = Vec::with_capacity(tags.len() + 1);
+        binds.push(account_id.to_string());
+        binds.extend(tags.iter().cloned());
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(binds), row_to_note)?;
+        rows.collect()
+    }
+
+    /// Drop tag rows whose note no longer exists (e.g. pruned after vanishing
+    /// from remote). Display queries already JOIN against `notes` so orphans
+    /// are invisible; this is hygiene to keep the table from accumulating them.
+    pub fn prune_orphan_tags(&self, account_id: &str) -> SqlResult<usize> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM note_tags
+             WHERE account_id = ?1
+               AND uuid NOT IN (SELECT uuid FROM notes WHERE account_id = ?1)",
+            params![account_id],
+        )?;
+        Ok(deleted)
     }
 }
 
