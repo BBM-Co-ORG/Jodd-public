@@ -131,6 +131,54 @@ export function setNoteTags(accountId: string, uuid: string, tags: string[]) {
   });
 }
 
+// Rename a tag across every note in an account (optimistic). Merges into an
+// existing tag if a note already carries newTag. Also rewrites selectedTags so
+// an active filter follows the rename. Rollback on backend failure is handled
+// by the caller re-loading the account's tags from SQLite.
+export function renameTagInStore(accountId: string, oldTag: string, newTag: string) {
+  noteTagsByAccount.update((m) => {
+    const inner = m.get(accountId);
+    if (inner) {
+      for (const [uuid, tags] of inner) {
+        if (!tags.includes(oldTag)) continue;
+        const next = tags.filter((t) => t !== oldTag);
+        if (!next.includes(newTag)) next.push(newTag);
+        inner.set(uuid, next.sort((a, b) => a.localeCompare(b)));
+      }
+      m.set(accountId, inner);
+    }
+    return m;
+  });
+  selectedTags.update((s) => {
+    if (!s.has(oldTag)) return s;
+    const n = new Set(s);
+    n.delete(oldTag);
+    n.add(newTag);
+    return n;
+  });
+}
+
+// Delete a tag from every note in an account (optimistic) and from any active
+// selection. Rollback handled by the caller (re-load from SQLite).
+export function deleteTagFromStore(accountId: string, tag: string) {
+  noteTagsByAccount.update((m) => {
+    const inner = m.get(accountId);
+    if (inner) {
+      for (const [uuid, tags] of inner) {
+        if (tags.includes(tag)) inner.set(uuid, tags.filter((t) => t !== tag));
+      }
+      m.set(accountId, inner);
+    }
+    return m;
+  });
+  selectedTags.update((s) => {
+    if (!s.has(tag)) return s;
+    const n = new Set(s);
+    n.delete(tag);
+    return n;
+  });
+}
+
 // Read one note's current tags out of a noteTagsByAccount snapshot.
 export function getNoteTags(
   map: Map<string, Map<string, string[]>>,

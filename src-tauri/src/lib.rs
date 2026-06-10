@@ -1107,6 +1107,35 @@ async fn list_cached_notes_with_tags(
     Ok(cached.into_iter().map(|c| c.to_frontend_note()).collect())
 }
 
+/// Rename a tag across every note in the account (global). Returns the
+/// normalized new tag so the frontend can reconcile its optimistic value.
+#[tauri::command]
+async fn rename_tag(
+    account_id: String,
+    old_tag: String,
+    new_tag: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let from = normalize_tag(&old_tag).ok_or_else(|| format!("Invalid tag: {:?}", old_tag))?;
+    let to = normalize_tag(&new_tag).ok_or_else(|| format!("Invalid tag: {:?}", new_tag))?;
+    state.db.rename_tag(&account_id, &from, &to).map_err(|e| e.to_string())?;
+    log!("rename_tag: account={} '{}' -> '{}'", account_id, from, to);
+    Ok(to)
+}
+
+/// Delete a tag from every note in the account (global).
+#[tauri::command]
+async fn delete_tag(
+    account_id: String,
+    tag: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let t = normalize_tag(&tag).unwrap_or_else(|| tag.clone());
+    state.db.delete_tag(&account_id, &t).map_err(|e| e.to_string())?;
+    log!("delete_tag: account={} tag={}", account_id, t);
+    Ok(())
+}
+
 // ─── Folder management ──────────────────────────────────────────────────────
 //
 // Folders are Gmail labels under the "Notes/" hierarchy. We always prepend
@@ -2417,6 +2446,8 @@ pub fn run() {
             list_tags,
             list_note_tags,
             list_cached_notes_with_tags,
+            rename_tag,
+            delete_tag,
             list_folders,
             create_folder,
             rename_folder,

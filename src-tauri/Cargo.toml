@@ -1,6 +1,6 @@
 [package]
 name = "jodd"
-version = "0.14.1"
+version = "0.14.2"
 description = "Apple Notes Bridge for Windows"
 authors = ["BBM Co"]
 edition = "2021"

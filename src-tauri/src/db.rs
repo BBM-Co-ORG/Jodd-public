@@ -1010,6 +1010,34 @@ impl Db {
         rows.collect()
     }
 
+    /// Rename a tag across every note in an account. Merges into an existing
+    /// tag if some notes already carry `new_tag`: UPDATE OR IGNORE renames the
+    /// rows that can move, then the leftover `old_tag` rows (those that would
+    /// have collided on the PK) are deleted — completing the merge with no
+    /// duplicates.
+    pub fn rename_tag(&self, account_id: &str, old_tag: &str, new_tag: &str) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE OR IGNORE note_tags SET tag = ?3 WHERE account_id = ?1 AND tag = ?2",
+            params![account_id, old_tag, new_tag],
+        )?;
+        conn.execute(
+            "DELETE FROM note_tags WHERE account_id = ?1 AND tag = ?2",
+            params![account_id, old_tag],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a tag from every note in an account.
+    pub fn delete_tag(&self, account_id: &str, tag: &str) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM note_tags WHERE account_id = ?1 AND tag = ?2",
+            params![account_id, tag],
+        )?;
+        Ok(())
+    }
+
     /// Drop tag rows whose note no longer exists (e.g. pruned after vanishing
     /// from remote). Display queries already JOIN against `notes` so orphans
     /// are invisible; this is hygiene to keep the table from accumulating them.

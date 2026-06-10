@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { notes, selectedFolder, selectedNote, isAuthenticated, accounts, currentAccount, refreshNotes, noteIndex, hydratedFolders, indexRewriteOnFolderRename, selectedTags, tagMatchMode, toggleSelectedTag, clearSelectedTags, tagsByAccount } from '../stores/notes';
+  import { notes, selectedFolder, selectedNote, isAuthenticated, accounts, currentAccount, refreshNotes, noteIndex, hydratedFolders, indexRewriteOnFolderRename, selectedTags, tagMatchMode, toggleSelectedTag, clearSelectedTags, tagsByAccount, renameTagInStore, deleteTagFromStore, setAccountNoteTags } from '../stores/notes';
   import type { Note, Account, DedupSummary } from '../types';
   import DupReviewModal from './DupReviewModal.svelte';
   import AccountSettings from './AccountSettings.svelte';
@@ -303,6 +303,84 @@
     selectedNote.set(null);
   }
 
+  // ─── Tag context menu (right-click a sidebar tag) ─────────────────────────
+  // Mirrors the folder menu: Rename / Delete operate globally across every note
+  // in the account. Reuses the .folder-menu styling and viewport-fit snap.
+  let tagMenuName: string | null = null;
+  let tagMenuAccountId: string | null = null;
+  let tagMenuX = 0;
+  let tagMenuY = 0;
+  let tagMenuEl: HTMLDivElement | undefined;
+  let tagMenuAdjustedX = 0;
+  let tagMenuAdjustedY = 0;
+  $: if (tagMenuEl && tagMenuName !== null) {
+    const rect = tagMenuEl.getBoundingClientRect();
+    tagMenuAdjustedX =
+      tagMenuX + rect.width > window.innerWidth
+        ? Math.max(8, window.innerWidth - rect.width - 8)
+        : tagMenuX;
+    tagMenuAdjustedY =
+      tagMenuY + rect.height > window.innerHeight
+        ? Math.max(8, window.innerHeight - rect.height - 8)
+        : tagMenuY;
+  }
+
+  function openTagMenu(e: MouseEvent, accountId: string, tag: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    tagMenuX = e.clientX;
+    tagMenuY = e.clientY;
+    tagMenuAdjustedX = e.clientX;
+    tagMenuAdjustedY = e.clientY;
+    tagMenuAccountId = accountId;
+    tagMenuName = tag;
+  }
+  function closeTagMenu() {
+    tagMenuName = null;
+    tagMenuAccountId = null;
+  }
+
+  // Re-pull an account's tag map from SQLite — used to roll back the optimistic
+  // store mutation if the backend op fails (the DB is unchanged on failure).
+  async function reloadAccountTags(accountId: string) {
+    try {
+      const rows = await invoke<{ uuid: string; tag: string }[]>('list_note_tags', { accountId });
+      setAccountNoteTags(accountId, rows);
+    } catch (e) {
+      console.error('reloadAccountTags failed', e);
+    }
+  }
+
+  async function renameTag(accountId: string, tag: string) {
+    closeTagMenu();
+    const input = await askName(`Rename tag "${tag}"`, tag);
+    if (input === null) return;
+    // Client normalization mirrors the backend (trim, lowercase, drop spaces/
+    // control/#). Unicode-friendly so Thai survives.
+    const next = input.trim().toLowerCase().replace(/[#\p{White_Space}\p{Cc}]/gu, '');
+    if (!next || next === tag) return;
+    renameTagInStore(accountId, tag, next); // optimistic
+    try {
+      await invoke('rename_tag', { accountId, oldTag: tag, newTag: next });
+    } catch (e) {
+      await reloadAccountTags(accountId); // rollback from DB
+      alert(`Failed to rename tag: ${e}`);
+    }
+  }
+
+  async function deleteTag(accountId: string, tag: string) {
+    closeTagMenu();
+    const ok = await askConfirm('Delete tag?', `Remove #${tag} from every note in this account?`);
+    if (!ok) return;
+    deleteTagFromStore(accountId, tag); // optimistic
+    try {
+      await invoke('delete_tag', { accountId, tag });
+    } catch (e) {
+      await reloadAccountTags(accountId); // rollback from DB
+      alert(`Failed to delete tag: ${e}`);
+    }
+  }
+
   // ─── Folder context menu ──────────────────────────────────────────────────
   // Right-click on a folder shows: New sub-folder / Rename / Delete.
   // We track BOTH the folder path AND the account it belongs to — folder ops
@@ -353,10 +431,10 @@
   }
 
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') closeFolderMenu();
+    if (e.key === 'Escape') { closeFolderMenu(); closeTagMenu(); }
   }
   function onWindowPointerDown(e: PointerEvent) {
-    if (!(e.target as HTMLElement).closest('.folder-menu')) closeFolderMenu();
+    if (!(e.target as HTMLElement).closest('.folder-menu')) { closeFolderMenu(); closeTagMenu(); }
   }
 
   onMount(() => {
@@ -926,6 +1004,7 @@
               tabindex="0"
               onclick={() => selectTag(acct.id, t.tag)}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTag(acct.id, t.tag); } }}
+              oncontextmenu={(e) => openTagMenu(e, acct.id, t.tag)}
             >
               <span class="folder-icon">🏷️</span>
               <span class="folder-name">{t.tag}</span>
@@ -1100,6 +1179,28 @@
         <span class="label">Delete</span>
       </button>
     {/if}
+  </div>
+{/if}
+
+<!-- Tag context menu — Rename / Delete operate across every note in the
+     account. Reuses .folder-menu styling. -->
+{#if tagMenuName !== null && tagMenuAccountId !== null}
+  <div
+    bind:this={tagMenuEl}
+    class="folder-menu"
+    style="left: {tagMenuAdjustedX}px; top: {tagMenuAdjustedY}px;"
+    role="menu"
+    tabindex="-1"
+  >
+    <div class="item header">#{tagMenuName}</div>
+    <button class="item" onclick={() => renameTag(tagMenuAccountId!, tagMenuName!)}>
+      <span class="icon">✏️</span>
+      <span class="label">Rename tag</span>
+    </button>
+    <button class="item danger" onclick={() => deleteTag(tagMenuAccountId!, tagMenuName!)}>
+      <span class="icon">🗑</span>
+      <span class="label">Delete tag</span>
+    </button>
   </div>
 {/if}
 
