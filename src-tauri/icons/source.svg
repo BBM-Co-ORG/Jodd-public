@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Ink & Dusk: indigo → dusk purple → warm muted gold (editorial, journal vibe) -->
+    <linearGradient id="cool" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2b3e7a"/>
+      <stop offset="55%" stop-color="#7a6caf"/>
+      <stop offset="100%" stop-color="#d9a866"/>
+    </linearGradient>
+
+    <!-- Fold underside: cream paper → kraft warm gray (suggests back of real paper) -->
+    <linearGradient id="foldCurl" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbf6ec"/>
+      <stop offset="55%" stop-color="#e8dcc4"/>
+      <stop offset="100%" stop-color="#a08b6a"/>
+    </linearGradient>
+
+    <!-- Wordmark: deeper trio for legibility on white -->
+    <linearGradient id="wordmark" x1="0%" y1="0%" x2="100%" y2="15%">
+      <stop offset="0%" stop-color="#1d2b5a"/>
+      <stop offset="55%" stop-color="#4c3f7e"/>
+      <stop offset="100%" stop-color="#a07237"/>
+    </linearGradient>
+
+    <!-- Hinge shadow on main paper from lifted curl -->
+    <linearGradient id="hingeShadow" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Radial shadow pooled under the curled tip -->
+    <radialGradient id="curlPool" cx="65%" cy="80%" r="55%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="paperShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-opacity="0.16"/>
+    </filter>
+
+    <!-- Crisp shadow just for the lifted fold piece -->
+    <filter id="curlShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="-3" dy="5" stdDeviation="5" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <!-- Warm off-white background -->
+  <circle cx="512" cy="512" r="472" fill="#f3f1ec"/>
+
+  <g filter="url(#paperShadow)">
+    <!-- Main paper sheet — corner cut for fold -->
+    <path d="M200 220 H680 L800 340 V820 H200 Z" fill="#ffffff"/>
+
+    <!-- Header bar — Ink & Dusk gradient -->
+    <rect x="200" y="220" width="480" height="64" fill="url(#cool)"/>
+
+    <!-- Soft inward shadow on paper near the hinge -->
+    <rect x="630" y="220" width="50" height="120" fill="url(#hingeShadow)"/>
+
+    <!-- Radial pool of shadow under the curled tip -->
+    <path d="M680 220 L800 340 L680 340 Z" fill="url(#curlPool)"/>
+
+    <!-- The peeled corner: curved hypotenuse for real page-peel feel -->
+    <g filter="url(#curlShadow)">
+      <path d="M680 220
+               Q762 252 800 340
+               L680 340 Z"
+            fill="url(#foldCurl)"/>
+    </g>
+
+    <!-- Crease highlight along the curl -->
+    <path d="M683 222 Q762 254 797 338"
+          fill="none" stroke="#ffffff" stroke-width="2.5"
+          opacity="0.55" stroke-linecap="round"/>
+
+    <!-- Wordmark "Jodd" -->
+    <text x="500" y="560"
+          font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+          font-size="200"
+          font-weight="800"
+          text-anchor="middle"
+          fill="url(#wordmark)"
+          letter-spacing="-6">Jodd</text>
+
+    <!-- Handwritten note lines — warm muted gray, matches palette -->
+    <line x1="290" y1="680" x2="710" y2="680"
+          stroke="#d6cfc1" stroke-width="14" stroke-linecap="round"/>
+    <line x1="290" y1="740" x2="600" y2="740"
+          stroke="#d6cfc1" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,50 @@
+[package]
+name = "jodd"
+version = "0.14.5"
+description = "Apple Notes Bridge for Windows"
+authors = ["BBM Co"]
+edition = "2021"
+default-run = "jodd"
+
+[lib]
+name = "jodd_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+urlencoding = "2"
+tiny_http = "0.12"
+keyring = "2"
+dotenv = "0.15"
+quoted_printable = "0.5"
+sha2 = "0.10"
+rand = "0.8"
+dirs = "5"
+# Local SQLite cache. `bundled` ships libsqlite3 with our binary so users
+# don't need it installed (especially relevant for Windows). Async wrapper
+# isn't needed — we use rusqlite from blocking tasks via tokio::task::spawn_blocking
+# where the I/O matters.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Release profile — optimize for the shipped binary. Trade compile time for
+# smaller binary + faster startup. `opt-level="s"` favors size; switch to "z"
+# for even smaller (at perf cost) or 3 for max speed. `panic="abort"` drops
+# unwinder code (we have no catch_unwind anywhere) — couple hundred KB smaller.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = "s"
