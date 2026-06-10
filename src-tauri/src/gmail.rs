@@ -585,6 +585,30 @@ pub struct DedupSummary {
     pub uuids_affected: usize,
 }
 
+/// Pick the single Notes-tree label to expose for a message, given the set of
+/// label IDs it carries. Resolves IDs to names, keeps only `Notes` / `Notes/*`,
+/// and prefers a sub-label (e.g. `Notes/Work`) over the plain `Notes` root.
+///
+/// This is the ONE authoritative label-selection rule. `fetch_note` uses it on
+/// a freshly-fetched message; the cache fast-paths in `list_notes` /
+/// `list_notes_in_label` use it to recompute the label of a reused cached note
+/// from the labels it was actually listed under THIS pass — so a remote label
+/// move (which leaves the Gmail message id unchanged, and therefore slips past
+/// the id-keyed cache) is reconciled instead of preserving the stale label.
+fn pick_notes_label(label_ids: &[String], label_map: &HashMap<String, String>) -> String {
+    let label_names: Vec<String> = label_ids
+        .iter()
+        .map(|id| label_map.get(id).cloned().unwrap_or_else(|| id.clone()))
+        .filter(|name| name == "Notes" || name.starts_with("Notes/"))
+        .collect();
+    label_names
+        .iter()
+        .find(|n| n.starts_with("Notes/"))
+        .or_else(|| label_names.first())
+        .cloned()
+        .unwrap_or_else(|| "Notes".to_string())
+}
+
 pub async fn list_notes(
     token: &str,
     label_map: &HashMap<String, String>,
@@ -618,11 +642,21 @@ pub async fn list_notes(
     // multiple Notes labels — e.g. "Notes" + "Notes/Work").
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut all_ids: Vec<String> = Vec::new();
+    // Per-message set of Notes label IDs it was listed under this pass. Because
+    // we query every Notes label and record which ones returned each message,
+    // this reconstructs the message's Notes-tree label membership WITHOUT a
+    // messages.get — exactly the input `pick_notes_label` needs to recompute a
+    // reused cached note's label (see the cache-reuse loop below).
+    let mut id_to_label_ids: HashMap<String, Vec<String>> = HashMap::new();
     for label_id in &notes_label_ids {
         match list_all_message_ids(token, label_id).await {
             Ok(ids) => {
                 log!("label {} returned {} messages (all pages)", label_id, ids.len());
                 for id in ids {
+                    id_to_label_ids
+                        .entry(id.clone())
+                        .or_default()
+                        .push(label_id.clone());
                     if seen_ids.insert(id.clone()) {
                         all_ids.push(id);
                     }
@@ -638,16 +672,35 @@ pub async fn list_notes(
     // afterward only pays for newly-arrived messages.
     let mut from_cache: Vec<Note> = Vec::new();
     let mut to_fetch: Vec<String> = Vec::new();
+    let mut relabeled = 0;
     for id in &all_ids {
         if let Some(cached) = cache_by_id.get(id) {
-            from_cache.push(cached.clone());
+            let mut note = cached.clone();
+            // Reconcile a remote label move. The id-keyed cache reuses the note
+            // wholesale, but a message relabeled in Gmail keeps the SAME id, so
+            // the cached `label` can be stale (e.g. a deleted folder's label
+            // lingering after the message was moved). Recompute from the labels
+            // it was actually listed under this pass, using the same rule as
+            // fetch_note, and correct the reused copy if they disagree.
+            if let Some(label_ids) = id_to_label_ids.get(id) {
+                let fresh = pick_notes_label(label_ids, label_map);
+                if fresh != note.label {
+                    log!(
+                        "list_notes: cache relabel id={} '{}' -> '{}'",
+                        id, note.label, fresh
+                    );
+                    note.label = fresh;
+                    relabeled += 1;
+                }
+            }
+            from_cache.push(note);
         } else {
             to_fetch.push(id.clone());
         }
     }
     log!(
-        "{} ids total — {} reused from cache, {} to fetch",
-        all_ids.len(), from_cache.len(), to_fetch.len()
+        "{} ids total — {} reused from cache ({} relabeled), {} to fetch",
+        all_ids.len(), from_cache.len(), relabeled, to_fetch.len()
     );
 
     // Parallelize messages.get with a concurrency cap. Gmail's per-user limit
@@ -793,12 +846,35 @@ pub async fn list_notes_in_label(
     let ids = list_all_message_ids(token, label_id).await?;
     log!("list_notes_in_label: {} returned {} messages (all pages)", label_id, ids.len());
 
+    // Name of the folder being queried — used to detect a stale cached label.
+    // Every returned message carries `label_id`, so its label must be this
+    // folder or a sub-folder of it; anything else is a stale leftover.
+    let queried_label = label_map.get(label_id).cloned();
+
     // Cache-aware split: reuse hydrated notes, fetch only the misses.
     let mut from_cache: Vec<Note> = Vec::new();
     let mut to_fetch: Vec<String> = Vec::new();
     for id in &ids {
         if let Some(cached) = cache_by_id.get(id) {
-            from_cache.push(cached.clone());
+            let mut note = cached.clone();
+            // Scoped reconcile of a remote label move. Unlike list_notes we only
+            // queried one label, so we can't reconstruct the full label set —
+            // but we know this message IS under `label_id`. If the cached label
+            // is neither this folder nor a descendant of it, it's stale (the
+            // message was moved here in Gmail while the id-keyed cache kept the
+            // old label); correct it. A legitimately-deeper sub-label is kept.
+            if let Some(q) = &queried_label {
+                let is_self_or_descendant =
+                    note.label == *q || note.label.starts_with(&format!("{}/", q));
+                if !is_self_or_descendant {
+                    log!(
+                        "list_notes_in_label: cache relabel id={} '{}' -> '{}'",
+                        id, note.label, q
+                    );
+                    note.label = q.clone();
+                }
+            }
+            from_cache.push(note);
         } else {
             to_fetch.push(id.clone());
         }
@@ -934,21 +1010,7 @@ pub async fn fetch_note(
 
     // Resolve label IDs to human-readable names, then pick the most specific
     // Notes-related label. Prefer a sub-label like "Notes/myNotes" over plain "Notes".
-    let label_names: Vec<String> = msg
-        .label_ids
-        .as_deref()
-        .unwrap_or(&[])
-        .iter()
-        .map(|id| label_map.get(id).cloned().unwrap_or_else(|| id.clone()))
-        .filter(|name| name == "Notes" || name.starts_with("Notes/"))
-        .collect();
-
-    let label = label_names
-        .iter()
-        .find(|n| n.starts_with("Notes/"))
-        .or_else(|| label_names.first())
-        .cloned()
-        .unwrap_or_else(|| "Notes".to_string());
+    let label = pick_notes_label(msg.label_ids.as_deref().unwrap_or(&[]), label_map);
 
     // Decode body — three sources, tried in order. We must FALL THROUGH from
     // a present-but-empty `body.data` to parts, because Gmail returns

@@ -2,10 +2,114 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy, tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { selectedNote, notes, isSaving, error, currentAccount, markRecentlySaved, indexUpsertOnSave, indexRemoveOnDelete } from '../stores/notes';
+  import { selectedNote, notes, isSaving, error, currentAccount, markRecentlySaved, indexUpsertOnSave, indexRemoveOnDelete, noteTagsByAccount, tagsByAccount, getNoteTags, setNoteTags } from '../stores/notes';
   import type { Note } from '../types';
 
   let title = '';
+
+  // ─── Tags (Jodd-local) ──────────────────────────────────────────────────
+  // Tags are independent of the note body and the autosave flow — they're a
+  // pure SQLite overlay. The chip row reads from noteTagsByAccount; add/remove
+  // optimistically patch the store (synchronous UI) then invoke, rolling back
+  // on failure. The client normalization here mirrors the backend's
+  // normalize_tag exactly, so the optimistic value equals what's stored.
+  let tagInput = '';
+  let tagInputFocused = false;
+  let suggestIndex = -1; // -1 = nothing highlighted; Enter commits typed text
+  $: currentTags = $selectedNote
+    ? getNoteTags($noteTagsByAccount, $selectedNote.account_id, $selectedNote.uuid)
+    : [];
+
+  // Autocomplete: existing tags for this account that match what's typed and
+  // aren't already on the note. Empty input → show all available (focus to
+  // browse). Recomputed every keystroke; the highlight resets so it never
+  // points at a stale row.
+  $: tagSuggestions = (() => {
+    if (!$selectedNote) return [] as string[];
+    const accountId = $selectedNote.account_id ?? $currentAccount;
+    if (!accountId) return [] as string[];
+    const own = new Set(getNoteTags($noteTagsByAccount, accountId, $selectedNote.uuid));
+    const q = normalizeTagClient(tagInput);
+    const all = ($tagsByAccount.get(accountId) ?? []).map((t) => t.tag).filter((t) => !own.has(t));
+    const matches = q === '' ? all : all.filter((t) => t.includes(q));
+    return matches.slice(0, 8);
+  })();
+  $: { void tagSuggestions; suggestIndex = -1; }
+
+  // Mirrors the backend normalize_tag exactly: trim, lowercase, then drop
+  // whitespace, control chars, and every '#'. Unicode-friendly (Thai/CJK/etc.
+  // survive) — \p{White_Space} and \p{Cc} match Rust's is_whitespace()/
+  // is_control().
+  function normalizeTagClient(raw: string): string {
+    return raw.trim().toLowerCase().replace(/[#\p{White_Space}\p{Cc}]/gu, '');
+  }
+
+  // Shared add path used by both typing-then-Enter and picking a suggestion.
+  async function addNormalizedTag(tag: string) {
+    const note = $selectedNote;
+    if (!note || !tag) return;
+    // A brand-new note still has a tmp: uuid that the first save replaces with
+    // a real Apple UUID. Tagging it now would key the row by the throwaway
+    // uuid and orphan it. The tag row is hidden for tmp: notes, but guard here.
+    if (note.uuid.startsWith('tmp:')) return;
+    const accountId = note.account_id ?? get(currentAccount);
+    if (!accountId) return;
+    const prev = getNoteTags(get(noteTagsByAccount), accountId, note.uuid);
+    if (prev.includes(tag)) return;
+    setNoteTags(accountId, note.uuid, [...prev, tag]); // optimistic
+    try {
+      await invoke('add_tag', { accountId, uuid: note.uuid, tag });
+    } catch (e) {
+      setNoteTags(accountId, note.uuid, prev); // rollback
+      error.set(String(e));
+    }
+  }
+
+  function commitTag() {
+    const tag = normalizeTagClient(tagInput);
+    tagInput = '';
+    suggestIndex = -1;
+    if (tag) addNormalizedTag(tag);
+  }
+
+  function pickSuggestion(tag: string) {
+    tagInput = '';
+    suggestIndex = -1;
+    addNormalizedTag(tag);
+  }
+
+  async function removeTag(tag: string) {
+    const note = $selectedNote;
+    if (!note) return;
+    const accountId = note.account_id ?? get(currentAccount);
+    if (!accountId) return;
+    const prev = getNoteTags(get(noteTagsByAccount), accountId, note.uuid);
+    setNoteTags(accountId, note.uuid, prev.filter((t) => t !== tag)); // optimistic
+    try {
+      await invoke('remove_tag', { accountId, uuid: note.uuid, tag });
+    } catch (e) {
+      setNoteTags(accountId, note.uuid, prev); // rollback
+      error.set(String(e));
+    }
+  }
+
+  function onTagKeydown(e: KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (tagSuggestions.length) suggestIndex = (suggestIndex + 1) % tagSuggestions.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (tagSuggestions.length) suggestIndex = (suggestIndex - 1 + tagSuggestions.length) % tagSuggestions.length;
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      // A highlighted suggestion wins; otherwise commit exactly what was typed.
+      if (suggestIndex >= 0 && suggestIndex < tagSuggestions.length) pickSuggestion(tagSuggestions[suggestIndex]);
+      else commitTag();
+    } else if (e.key === 'Escape') {
+      suggestIndex = -1;
+      tagInputFocused = false;
+    }
+  }
   let editorEl: HTMLDivElement;
   let saveTimer: ReturnType<typeof setTimeout>;
 
@@ -771,6 +875,45 @@
       placeholder="Title"
     />
 
+    {#if !$selectedNote.uuid?.startsWith('tmp:')}
+      <div class="tag-row">
+        {#each currentTags as tag (tag)}
+          <span class="tag-chip">
+            #{tag}
+            <button
+              type="button"
+              class="tag-remove"
+              title="Remove tag"
+              aria-label="Remove tag {tag}"
+              onclick={() => removeTag(tag)}
+            >×</button>
+          </span>
+        {/each}
+        <div class="tag-input-wrap">
+          <input
+            class="tag-input"
+            bind:value={tagInput}
+            onkeydown={onTagKeydown}
+            onfocus={() => (tagInputFocused = true)}
+            onblur={() => (tagInputFocused = false)}
+            placeholder="add tag…"
+            autocomplete="off"
+          />
+          {#if tagInputFocused && tagSuggestions.length > 0}
+            <ul class="tag-suggest">
+              {#each tagSuggestions as s, i (s)}
+                <li
+                  class="tag-suggest-item"
+                  class:highlight={i === suggestIndex}
+                  onmousedown={(e) => { e.preventDefault(); pickSuggestion(s); }}
+                >#{s}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <div
       class="editor-body"
       contenteditable="true"
@@ -958,6 +1101,91 @@
 
   .title-input::placeholder {
     color: #ccc;
+  }
+
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 0 28px 6px;
+  }
+
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 12px;
+    color: #6b6150;
+    background: rgba(0, 0, 0, 0.06);
+    padding: 2px 4px 2px 9px;
+    border-radius: 11px;
+  }
+
+  .tag-remove {
+    border: none;
+    background: transparent;
+    color: #a89e8a;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+    border-radius: 50%;
+  }
+
+  .tag-remove:hover {
+    color: #c0392b;
+  }
+
+  .tag-input-wrap {
+    position: relative;
+    display: inline-block;
+  }
+
+  .tag-input {
+    font-size: 12px;
+    border: none;
+    outline: none;
+    background: transparent;
+    padding: 2px 4px;
+    min-width: 80px;
+    font-family: inherit;
+    color: #6b6150;
+  }
+
+  .tag-input::placeholder {
+    color: #cfc8b8;
+  }
+
+  .tag-suggest {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    margin: 2px 0 0;
+    padding: 4px;
+    list-style: none;
+    min-width: 140px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #e0d9c8;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  }
+
+  .tag-suggest-item {
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #6b6150;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+
+  .tag-suggest-item:hover,
+  .tag-suggest-item.highlight {
+    background: #f3e4c0;
+    color: #3a2f12;
   }
 
   .editor-body {
