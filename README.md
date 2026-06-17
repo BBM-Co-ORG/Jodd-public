@@ -1,153 +1,136 @@
-# Jodd — Apple Notes anywhere
+# Jodd — Apple Notes, anywhere
 
-Jodd (Thai *จด*, "to jot") is a desktop app that brings **Apple Notes**
-to **non-Apple devices** — Windows, Linux, and macOS — by reading and
-writing the same email-based backend Apple Notes uses when you connect
-a non-iCloud account (Gmail today; Outlook planned).
+> **Thai จด** (jòt) — "to jot, to note down."
 
-If you live half in the Apple ecosystem and half outside it, Jodd lets
-you keep one set of notes across both worlds without copy-paste or
-third-party note apps.
+Apple Notes uses email as its sync backbone for non-iCloud accounts.
+Every note is a plain RFC 822 message with custom headers living in a
+`Notes` label on your Gmail, Outlook, or Exchange mailbox. Jodd reads
+and writes those same messages — so your notes are yours, wherever you are.
 
-> ⚠️ **Beta software.** Read the [Disclaimer](DISCLAIMER.md) before you
-> use Jodd against an account that contains data you care about. The
-> disclaimer also covers Jodd's **AI-assisted development origin** and
-> the **cleanroom interoperability** approach used for the
-> Apple Notes ↔ Gmail wire format — important reading if you intend
-> to fork or redistribute.
+---
 
-## How it works
+## Two ways to use Jodd
 
-Apple Notes already syncs notes to non-iCloud accounts by storing each
-note as an email message in a special `Notes` label/folder, with custom
-headers (`X-Uniform-Type-Identifier: com.apple.mail-note`,
-`X-Universally-Unique-Identifier: <UUID>`, etc.) and an HTML body.
-Folder hierarchy is mapped onto Gmail labels (`Notes/Work/Projects`).
+### 1. Standalone — no account needed
 
-Jodd talks to the **same backend** — the Gmail REST API today, the
-Microsoft Graph API tomorrow — so your iPhone, your Mac, and your
-Windows machine all read and write the same set of messages. Round-trip
-fidelity with Apple Notes is the central correctness goal.
+Store notes as `.eml` files in any folder on your computer.
+Zero sign-in, zero cloud, works offline. A great place to start.
 
-Local storage is a **SQLite cache** acting as the source of truth for
-the UI. A 5-second background worker pushes local edits to the remote
-and pulls remote changes back. The architecture is described in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+### 2. Gmail sync — Apple Notes round-trip
+
+Connect your Gmail account (the one your iPhone syncs Apple Notes to)
+and Jodd becomes a full desktop client for Apple Notes — create, edit,
+and organise notes that show up on your iPhone the next time it syncs.
+
+> ⚠️ **Gmail sync requires your own Google Cloud credentials (BYO).**
+> Jodd is open-source and ships without an OAuth client ID. You create a
+> free Desktop OAuth client in Google Cloud Console and point Jodd at it.
+> See [Build from source](#build-from-source) for instructions.
+> Pre-built binaries do not include credentials — you must supply them.
+
+Outlook / Microsoft Graph is on the roadmap.
+
+---
+
+## What round-trips to Apple Notes vs. what stays in Jodd
+
+| Feature | Round-trips to Apple? |
+|---|---|
+| Note title & rich-text body | ✅ Yes |
+| Folder hierarchy (`Notes/Work/Projects`) | ✅ Yes |
+| Inline `#hashtags` in body | ✅ Yes |
+| Checklists | ✅ Yes (Jodd-authoritative state) |
+| Attachments (images, PDFs) | ✅ Yes |
+| Pin 📌 | Jodd-only — visible across your Jodd devices, invisible on iPhone |
+| `[[wikilinks]]` + graph view | Jodd-only — stored as text in the body; Apple shows plain text |
+| AI-extracted notes | Jodd-only — folder lives in Gmail, iPhone ignores it |
+
+*"Jodd-only" means the data is safe and lives in your Gmail or local files —
+it just won't render the same way in Apple Notes on iPhone.*
+
+---
 
 ## Status
 
-Jodd is **pre-1.0**. The Gmail backend works end-to-end:
+Pre-1.0 beta. The Gmail backend works end-to-end. Major features shipped:
 
-- Notes and folders with full round-trip fidelity to Apple Notes.
-- Conflict resolution (keep-both) and multi-account support.
-- **Pin** via Jodd-managed sidecar messages (Jodd-local).
-- **Tags** — inline `#hashtags` parsed from the note body (so they
-  round-trip to Apple Notes), surfaced in the sidebar, with
-  multi-select filtering (AND/OR), editor autocomplete, Unicode
-  support (Thai/CJK, not just ASCII), rename/delete from the sidebar,
-  and cross-instance sync via `Notes-Meta` sidecars.
-- **Multi-select** notes for batch move and delete.
+- Full Apple Notes round-trip fidelity (title, body, folders, attachments)
+- Conflict resolution (keep-both) when the same note is edited on two devices
+- Multi-account — connect several Gmail accounts simultaneously
+- Rich text: headings, bold/italic/underline, checklists, ordered & unordered lists
+- Inline `#hashtags` with sidebar filtering, rename, and cross-account search
+- `[[wikilinks]]` with autocomplete, a connections panel, and a local graph view
+- AI-assisted note extraction (paste any text → structured extract note)
+- Pin notes, multi-select batch move/delete, recently-deleted restore
+- **Standalone Local Folder** — `.eml` vault, no cloud account required
 
-Microsoft/Outlook is on the roadmap. No mobile client — use the
-native Apple Notes app on iPhone/iPad.
+---
+
+## Install pre-built binaries
+
+Download from the [Releases page](https://github.com/BBM-Co-ORG/Jodd-public/releases).
+
+Pre-built binaries are **ad-hoc signed** (macOS) and **unsigned** (Windows).
+Your OS will warn on first run — this is expected for an unsigned build:
+
+- **macOS** — "Apple cannot check this app…" → right-click → **Open** → confirm.
+  After the first launch, subsequent opens are normal.
+- **Windows** — SmartScreen: click **More info → Run anyway**.
+
+If you're not comfortable bypassing these warnings, build from source instead
+(same code, signed by your own toolchain).
+
+---
 
 ## Build from source
 
-You will need:
+**Requirements:** Rust stable (`rustup`), Node.js ≥ 20
 
-- **Rust** stable (`rustup` recommended)
-- **Node.js** ≥ 20 with `npm`
-- A **Google Cloud project** of your own (see below) — you cannot use
-  someone else's OAuth credentials.
-
-### 1. Create a Google OAuth 2.0 Desktop client
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/) →
-   create a new project (or pick an existing one).
-2. **APIs & Services → Library** → enable the **Gmail API**.
-3. **APIs & Services → OAuth consent screen** → configure (External,
-   add yourself as a test user, request scope
-   `https://www.googleapis.com/auth/gmail.modify`).
-4. **APIs & Services → Credentials → Create credentials → OAuth client
-   ID** → application type **Desktop application**.
-5. Note the **Client ID** and **Client secret**. (Google's docs are
-   explicit that the secret for Desktop clients is *not* truly secret;
-   PKCE on top of it provides the per-flow protection. Jodd uses PKCE.)
-
-### 2. Configure environment
+### Standalone use (no Gmail)
 
 ```bash
 git clone https://github.com/BBM-Co-ORG/Jodd-public
 cd Jodd-public
-cp .env.example .env
-# Edit .env and fill in GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET
+npm install
+npm run tauri build
 ```
 
-### 3. Build
+### Gmail sync — BYO credentials
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → create a project
+2. **APIs & Services → Library** → enable **Gmail API**
+3. **OAuth consent screen** → External → add your email as a test user →
+   scope `https://www.googleapis.com/auth/gmail.modify`
+4. **Credentials → Create → OAuth client ID → Desktop application**
+5. Copy the **Client ID** and **Client Secret**
 
 ```bash
+cp .env.example .env
+# Edit .env and fill in GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET
 npm install
-npm run tauri build           # release bundle
-# or
-npm run tauri dev             # development mode with hot reload
+npm run tauri build
 ```
 
-Bundles land in `src-tauri/target/release/bundle/`:
+> The client secret for a Desktop OAuth app is not truly confidential
+> ([per Google's own docs](https://developers.google.com/identity/protocols/oauth2));
+> PKCE provides the per-flow security on top of it.
 
-- **macOS**: `bundle/dmg/Jodd_<version>_aarch64.dmg`
-- **Windows**: `bundle/msi/Jodd_<version>_x64.msi`
-- **Linux**: `bundle/appimage/jodd_<version>_amd64.AppImage`
-
-A binary you build yourself is **ad-hoc signed** on macOS and
-**unsigned** on Windows — your OS will warn the first time you run it.
-That is normal for a self-build.
-
-## Install pre-built binaries
-
-Releases are published to the
-[Releases page](https://github.com/BBM-Co-ORG/Jodd-public/releases).
-Until the project is code-signed, the OS will show:
-
-- **macOS** — "Apple cannot check this app for malicious software."
-  Right-click the app → **Open** → confirm. Once allowed the first
-  time, subsequent launches are normal.
-- **Windows** — "Windows protected your PC" (SmartScreen). Click
-  **More info → Run anyway**.
-
-If you are not comfortable bypassing these warnings, **build from
-source instead** — the same code, just signed locally by your own
-toolchain.
-
-## First-run setup
-
-1. Launch Jodd. The sign-in screen opens a browser window.
-2. Choose the Google account that holds your Apple Notes mailbox. (The
-   account must already have Notes synced to it — set this up once on
-   an iPhone or Mac under **Settings → Notes → Accounts**.)
-3. Grant the Gmail scope. Refresh token is stored in your OS keychain.
-4. Wait for the index pass to complete (a few seconds for small
-   mailboxes, up to a minute for 5k+ notes). Folders appear in the
-   sidebar as the index lands.
-
-To add a second account: **Sidebar → + Add account**. Each account has
-independent storage; UUIDs are namespaced per account.
+---
 
 ## Contributing
 
 PRs are welcome — bug fixes especially.
 
-Development happens on a separate **private upstream** repository.
-This public repository is a periodic sanitized snapshot. The workflow
-is described in [CONTRIBUTING.md](CONTRIBUTING.md). In short: open
-your PR here, the maintainers will cherry-pick the patch into the
-upstream repo, and the next snapshot will include it (with attribution).
+Development happens on a private upstream repository. This public repository
+is a periodic sanitized snapshot. Open your PR here; maintainers will
+cherry-pick into upstream with attribution.
 
-For security issues, please follow [SECURITY.md](SECURITY.md) — do not
-file public issues for security reports.
+For security issues, see [SECURITY.md](SECURITY.md) — do not file public issues.
+
+---
 
 ## License
 
-[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+[Apache License 2.0](LICENSE).
 
-Jodd is **not affiliated with Apple, Google, or Microsoft**. See the
-full [Disclaimer](DISCLAIMER.md).
+Jodd is **not affiliated with Apple, Google, or Microsoft**.
