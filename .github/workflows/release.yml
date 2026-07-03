@@ -1,0 +1,216 @@
+# Release pipeline for Jodd.
+#
+# Trigger options:
+#   - Tag push (`git tag v0.2.0 && git push origin v0.2.0`) → real GitHub release
+#   - Manual dispatch from the Actions tab → draft release for testing
+#
+# Matrix targets:
+#   - macos-latest (Apple Silicon)  → .dmg / .app
+#   - macos-13     (Intel)          → .dmg / .app
+#   - windows-latest                → .msi / .exe
+#
+# Secrets required (Repo → Settings → Secrets and variables → Actions):
+#   GOOGLE_CLIENT_ID      (required — embedded into binary at compile time)
+#   GOOGLE_CLIENT_SECRET  (required — same)
+#
+# Optional secrets (for code signing — without them users see Gatekeeper /
+# SmartScreen warnings but the binary still runs):
+#   APPLE_CERTIFICATE             (base64 of the .p12 Developer ID cert)
+#   APPLE_CERTIFICATE_PASSWORD    (password for the .p12)
+#   APPLE_SIGNING_IDENTITY        ("Developer ID Application: Name (TEAMID)")
+#   APPLE_ID                      (Apple ID for notarization)
+#   APPLE_PASSWORD                (app-specific password for notarization)
+#   APPLE_TEAM_ID                 (Team ID)
+#   WINDOWS_CERTIFICATE           (base64 of the .pfx Windows code-signing cert)
+#   WINDOWS_CERTIFICATE_PASSWORD  (password for the .pfx)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'    # Apple Silicon
+            args: '--target aarch64-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+          # macOS Intel (macos-13, x86_64-apple-darwin) temporarily dropped to
+          # save Actions minutes (macOS bills 10×). Re-add when cutting a real
+          # Intel-Mac release.
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS runners need the cross-arch target explicitly.
+          targets: "${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}"
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build & bundle (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Auto-provided by GitHub Actions; scope follows `permissions:`
+          # at the job level (contents: write — enough to create a release).
+          # tauri-action reads this env var to attach build artifacts to
+          # the draft release; without it the action errors before bundling.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Embedded into the binary at compile time via src-tauri/build.rs.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          # macOS / Windows code signing intentionally left UNSET while we
+          # don't have certs. tauri-action checks "is env defined" not "is it
+          # non-empty", so passing empty `${{ secrets.APPLE_CERTIFICATE }}`
+          # values triggers the signing path with an empty cert → security
+          # import fails. When you get an Apple Developer cert / Windows
+          # cert, add the secrets in repo settings AND uncomment the env
+          # block below — tauri-action will pick them up automatically.
+          #
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # Empty tagName + releaseId means "use the pushed tag" when triggered
+          # by a `v*` tag, or create a draft release on manual dispatch.
+          tagName: "${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseName: "Jodd ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseBody: |
+            Release notes are set automatically from CHANGELOG.md by the finalize job.
+
+            **Install notes:**
+            - macOS: open with right-click → Open (first run only — Gatekeeper)
+            - Windows: SmartScreen may warn — click "More info" → "Run anyway"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # Sanity check: Jodd.app/Contents/MacOS/ must contain exactly ONE binary
+      # (the main `jodd` executable). On macOS Tahoe (26.x), launchd refuses
+      # to spawn ad-hoc signed bundles with multiple binaries in MACOS/ — the
+      # process hangs at _dyld_start (RSS=32K) with no useful error. This
+      # used to happen silently when a dev binary in src-tauri/src/bin/ was
+      # accidentally pulled into the bundle by Tauri's bundler. The gate in
+      # Cargo.toml ([[bin]] required-features=["debug-bins"]) should prevent
+      # it; this step is the belt-and-braces in case someone removes the
+      # gate or adds a new binary without one.
+      - name: Verify macOS bundle layout
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          MACOS_DIR=src-tauri/target/${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin/' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin/' || '' }}release/bundle/macos/Jodd.app/Contents/MacOS
+          if [ ! -d "$MACOS_DIR" ]; then
+            echo "ERROR: $MACOS_DIR does not exist — bundling likely failed earlier."
+            exit 1
+          fi
+          count=$(ls -1 "$MACOS_DIR" | wc -l | tr -d ' ')
+          if [ "$count" -ne 1 ]; then
+            echo "ERROR: $MACOS_DIR has $count entries (expected exactly 1: jodd)."
+            ls -la "$MACOS_DIR"
+            echo ""
+            echo "Cause: an extra binary got bundled into Contents/MacOS/."
+            echo "Fix: gate it in src-tauri/Cargo.toml under [[bin]] with"
+            echo "     required-features = [\"debug-bins\"] so release builds skip it."
+            exit 1
+          fi
+          echo "OK: Contents/MacOS/ contains only the main binary."
+
+  # Runs once after all platform builds, on a real tag only. Sets the private
+  # release's notes from CHANGELOG.md, then publishes the same binaries + notes
+  # to the public download repo. Source is never pushed — releases only.
+  finalize:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # edit/read the release on THIS (private) repo
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Derive tag + version, build notes file
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Fails the job if CHANGELOG.md has no section for this version.
+          node scripts/changelog-section.mjs "$VERSION" > notes.md
+          echo "Notes for $TAG:"; cat notes.md
+
+      - name: Set release notes on the private repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      - name: Download built assets from the private release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          # Works on a draft release with the contents:write token.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          echo "Downloaded:"; ls -la assets
+
+      - name: Publish binaries + notes to Jodd-public
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PUB="BBM-Co-ORG/Jodd-public"
+          # Create the public release if it doesn't exist yet, else upload
+          # (clobbering) into the existing one. Published (not draft) so users
+          # can download immediately — add `--draft` here to gate it instead.
+          if gh release view "$TAG" --repo "$PUB" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --repo "$PUB" --clobber
+            gh release edit "$TAG" --repo "$PUB" --notes-file notes.md
+          else
+            gh release create "$TAG" assets/* \
+              --repo "$PUB" \
+              --title "Jodd $TAG" \
+              --notes-file notes.md
+          fi
