@@ -1,0 +1,72 @@
+[package]
+name = "jodd"
+version = "0.17.7"
+description = "Apple Notes Bridge for Windows"
+authors = ["BBM Co"]
+edition = "2021"
+default-run = "jodd"
+
+[lib]
+name = "jodd_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+urlencoding = "2"
+tiny_http = "0.12"
+keyring = "2"
+dotenv = "0.15"
+quoted_printable = "0.5"
+sha2 = "0.10"
+rand = "0.8"
+dirs = "5"
+# Local SQLite cache. `bundled` ships libsqlite3 with our binary so users
+# don't need it installed (especially relevant for Windows). Async wrapper
+# isn't needed — we use rusqlite from blocking tasks via tokio::task::spawn_blocking
+# where the I/O matters.
+rusqlite = { version = "0.31", features = ["bundled"] }
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+async-trait = "0.1"
+thiserror = "1"
+which = "6"  # for resolving `claude` binary path at startup
+mail-parser = "0.9"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"
+
+# Dev/debug binaries live in examples/, NOT src/bin/. Reason: Tauri's bundler
+# iterates over every [[bin]] in Cargo.toml (including auto-discovered
+# src/bin/*.rs targets) and copies each into Jodd.app/Contents/MacOS/. A
+# Cargo `required-features` gate doesn't help — Tauri still tries to copy
+# and errors out. macOS Tahoe (26.x) launchd then refuses to spawn ad-hoc
+# bundles with multiple binaries in MACOS/ anyway. Examples (`cargo run
+# --example <name>`) are invisible to Tauri's bundler — that's the right
+# home for run-once integration tests against live accounts.
+
+# Release profile — optimize for the shipped binary. Trade compile time for
+# smaller binary + faster startup. `opt-level="s"` favors size; switch to "z"
+# for even smaller (at perf cost) or 3 for max speed. `panic="abort"` drops
+# unwinder code (we have no catch_unwind anywhere) — couple hundred KB smaller.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = "s"
