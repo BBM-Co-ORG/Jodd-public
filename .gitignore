@@ -1,0 +1,46 @@
+.DS_Store
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Rust / Tauri build outputs
+# Workspace conversion (Task 12) moved the build dir from src-tauri/target/ to
+# the workspace root's /target — cargo build/run from repo root land here now.
+/target
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# IDE
+.vscode/
+.qoder/
+
+# OS
+**/.DS_Store
+
+# Bundles
+/dist
+.claude/
+
+# Generated from CHANGELOG.md at build time (do not commit)
+src/lib/generated/
+
+# Subagent-driven-development scratch: ledgers, briefs, reports, review packages.
+# Session-local working state, not project content.
+.superpowers/
+
+# graphify knowledge graph — derived from the repo, rebuilt by the post-commit
+# hook on every commit. Several MB of generated HTML/JSON; regenerate with
+# /graphify rather than committing it.
+graphify-out/
+
+# Android signing keystore — never committed. Tauri ignores
+# key.properties/keystore.properties inside gen/android already, but the
+# keystore itself lives at the repo root.
+*.keystore
+*.jks
