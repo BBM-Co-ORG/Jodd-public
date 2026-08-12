@@ -1,0 +1,356 @@
+# Release pipeline for Jodd.
+#
+# Trigger options:
+#   - Tag push (`git tag v0.2.0 && git push origin v0.2.0`) → real GitHub release
+#   - Manual dispatch from the Actions tab → draft release for testing
+#
+# Matrix targets:
+#   - macos-latest (Apple Silicon)  → .dmg / .app
+#   - macos-13     (Intel)          → .dmg / .app
+#   - windows-latest                → .msi / .exe
+#   - build-android (ubuntu-latest) → universal .apk (all 4 ABIs)
+#
+# Secrets required (Repo → Settings → Secrets and variables → Actions):
+#   GOOGLE_CLIENT_ID      (required — embedded into binary at compile time)
+#   GOOGLE_CLIENT_SECRET  (required — same)
+#   GOOGLE_CLIENT_ID_ANDROID      (required for the Android job — a
+#                                  DIFFERENT, Web-application-type OAuth
+#                                  client; see .env.example and
+#                                  docs/android/APP-LINKS-SETUP.md for why)
+#   GOOGLE_CLIENT_SECRET_ANDROID  (required for the Android job — same)
+#   ANDROID_KEYSTORE_BASE64    (required for the Android job — base64 of the
+#                               release keystore; without it the Android job
+#                               fails outright rather than silently shipping
+#                               an unsigned/differently-keyed APK, since a
+#                               release signed with the wrong key breaks
+#                               Android App Links OAuth for every existing
+#                               install — see CLAUDE.md edge #11)
+#   ANDROID_KEYSTORE_PASSWORD  (required for the Android job — keystore password)
+#   ANDROID_KEY_ALIAS          (required for the Android job — key alias inside it)
+#   ANDROID_KEY_PASSWORD       (required for the Android job — that key's password)
+#
+# Optional secrets (for code signing — without them users see Gatekeeper /
+# SmartScreen warnings but the binary still runs):
+#   APPLE_CERTIFICATE             (base64 of the .p12 Developer ID cert)
+#   APPLE_CERTIFICATE_PASSWORD    (password for the .p12)
+#   APPLE_SIGNING_IDENTITY        ("Developer ID Application: Name (TEAMID)")
+#   APPLE_ID                      (Apple ID for notarization)
+#   APPLE_PASSWORD                (app-specific password for notarization)
+#   APPLE_TEAM_ID                 (Team ID)
+#   WINDOWS_CERTIFICATE           (base64 of the .pfx Windows code-signing cert)
+#   WINDOWS_CERTIFICATE_PASSWORD  (password for the .pfx)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'    # Apple Silicon
+            args: '--target aarch64-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+          # macOS Intel (macos-13, x86_64-apple-darwin) temporarily dropped to
+          # save Actions minutes (macOS bills 10×). Re-add when cutting a real
+          # Intel-Mac release.
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS runners need the cross-arch target explicitly.
+          targets: "${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}"
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build & bundle (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Auto-provided by GitHub Actions; scope follows `permissions:`
+          # at the job level (contents: write — enough to create a release).
+          # tauri-action reads this env var to attach build artifacts to
+          # the draft release; without it the action errors before bundling.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Embedded into the binary at compile time via src-tauri/build.rs.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          # macOS / Windows code signing intentionally left UNSET while we
+          # don't have certs. tauri-action checks "is env defined" not "is it
+          # non-empty", so passing empty `${{ secrets.APPLE_CERTIFICATE }}`
+          # values triggers the signing path with an empty cert → security
+          # import fails. When you get an Apple Developer cert / Windows
+          # cert, add the secrets in repo settings AND uncomment the env
+          # block below — tauri-action will pick them up automatically.
+          #
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # Empty tagName + releaseId means "use the pushed tag" when triggered
+          # by a `v*` tag, or create a draft release on manual dispatch.
+          tagName: "${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseName: "Jodd ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseBody: |
+            Release notes are set automatically from CHANGELOG.md by the finalize job.
+
+            **Install notes:**
+            - macOS: open with right-click → Open (first run only — Gatekeeper)
+            - Windows: SmartScreen may warn — click "More info" → "Run anyway"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # Sanity check: Jodd.app/Contents/MacOS/ must contain exactly ONE binary
+      # (the main `jodd` executable). On macOS Tahoe (26.x), launchd refuses
+      # to spawn ad-hoc signed bundles with multiple binaries in MACOS/ — the
+      # process hangs at _dyld_start (RSS=32K) with no useful error. This
+      # used to happen silently when a dev binary in src-tauri/src/bin/ was
+      # accidentally pulled into the bundle by Tauri's bundler. The gate in
+      # Cargo.toml ([[bin]] required-features=["debug-bins"]) should prevent
+      # it; this step is the belt-and-braces in case someone removes the
+      # gate or adds a new binary without one.
+      - name: Verify macOS bundle layout
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          MACOS_DIR=target/${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin/' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin/' || '' }}release/bundle/macos/Jodd.app/Contents/MacOS
+          if [ ! -d "$MACOS_DIR" ]; then
+            echo "ERROR: $MACOS_DIR does not exist — bundling likely failed earlier."
+            exit 1
+          fi
+          count=$(ls -1 "$MACOS_DIR" | wc -l | tr -d ' ')
+          if [ "$count" -ne 1 ]; then
+            echo "ERROR: $MACOS_DIR has $count entries (expected exactly 1: jodd)."
+            ls -la "$MACOS_DIR"
+            echo ""
+            echo "Cause: an extra binary got bundled into Contents/MacOS/."
+            echo "Fix: gate it in src-tauri/Cargo.toml under [[bin]] with"
+            echo "     required-features = [\"debug-bins\"] so release builds skip it."
+            exit 1
+          fi
+          echo "OK: Contents/MacOS/ contains only the main binary."
+
+  # Separate from the desktop matrix above: Android needs a different
+  # toolchain (JDK, Android SDK/NDK) and a different bundler (the raw `tauri
+  # android build` CLI, not tauri-action — which is built around desktop
+  # bundle formats). `needs: build` so this always runs after the desktop
+  # matrix, which is what creates the draft release via tauri-action; this
+  # job only uploads INTO that release, so it must exist first — running in
+  # true parallel would race `gh release upload` against a release that
+  # doesn't exist yet on a fast Android build / slow macOS notarization day.
+  build-android:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Rust (stable) with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android'
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Install Android SDK
+        # Pinned to v3 deliberately, despite the "forced to run on Node 24"
+        # deprecation warning this produces. The NDK cleanup step immediately
+        # below (see its own comment) is empirically tuned to v3's specific
+        # pre-install behavior (it drops NDK 29.0.14206865 alongside our
+        # pinned 27.3.13750724). v4 may pre-install a different set, which
+        # could silently break that cleanup without a real Android build to
+        # verify against. Bump only alongside re-verifying the NDK step.
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        # Pinned to match the version this project has been built and
+        # verified against locally (r27d) — see
+        # docs/superpowers/HANDOFF-2026-07-31-android-bringup.md. NDK 27 was
+        # chosen deliberately over 28/29; do not "helpfully" bump this to
+        # latest without re-reading why.
+        #
+        # Setting NDK_HOME to this path is NOT enough on its own — confirmed
+        # empirically (first CI run): android-actions/setup-android@v3
+        # pre-installs a newer NDK (29.0.14206865 as of this writing), and
+        # Tauri's own build tooling ignores NDK_HOME entirely, instead always
+        # auto-picking the highest-versioned NDK it finds under
+        # $ANDROID_HOME/ndk/ ("Info Using installed NDK: ...29.0.14206865"
+        # in the build log, despite NDK_HOME correctly pointing at 27.3.x).
+        # So the pin only holds if 27.3.13750724 is the ONLY version
+        # present — remove every other one after installing it.
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;27.3.13750724"
+          find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d ! -name '27.3.13750724' -exec rm -rf {} +
+          echo "Installed NDK versions:"; ls "$ANDROID_HOME/ndk"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 is not set. A release APK signed"
+            echo "with the wrong key (or unsigned) breaks Android App Links OAuth"
+            echo "for every existing install — see CLAUDE.md edge #11 — so this"
+            echo "job refuses to proceed rather than shipping one quietly."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/jodd-android-release.keystore"
+
+      - name: Build (Tauri Android, release, all ABIs)
+        env:
+          # ANDROID_HOME is already exported into the job environment by
+          # android-actions/setup-android; NDK_HOME is built from it here
+          # since that action doesn't export NDK_HOME itself.
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+          GOOGLE_CLIENT_ID_ANDROID: ${{ secrets.GOOGLE_CLIENT_ID_ANDROID }}
+          GOOGLE_CLIENT_SECRET_ANDROID: ${{ secrets.GOOGLE_CLIENT_SECRET_ANDROID }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jodd-android-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: npx tauri android build
+
+      - name: Locate + rename APK for the release
+        id: apk
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}
+        run: |
+          set -euo pipefail
+          SRC="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+          if [ ! -f "$SRC" ]; then
+            echo "ERROR: expected APK not found at $SRC"
+            find src-tauri/gen/android/app/build/outputs -iname '*.apk' || true
+            exit 1
+          fi
+          DEST="Jodd_${TAG}_android-universal.apk"
+          cp "$SRC" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}
+          APK_PATH: ${{ steps.apk.outputs.path }}
+        run: gh release upload "$TAG" "$APK_PATH" --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Runs once after all platform builds, on a real tag only. Sets the private
+  # release's notes from CHANGELOG.md, then publishes the same binaries + notes
+  # to the public download repo. Source is never pushed — releases only.
+  finalize:
+    needs: [build, build-android]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # edit/read the release on THIS (private) repo
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Derive tag + version, build notes file
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Fails the job if CHANGELOG.md has no section for this version.
+          node scripts/changelog-section.mjs "$VERSION" > notes.md
+          echo "Notes for $TAG:"; cat notes.md
+
+      - name: Set release notes on the private repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      - name: Download built assets from the private release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          # Works on a draft release with the contents:write token.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          echo "Downloaded:"; ls -la assets
+
+      - name: Publish binaries + notes to Jodd-public
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PUB="BBM-Co-ORG/Jodd-public"
+          # Create the public release if it doesn't exist yet, else upload
+          # (clobbering) into the existing one. Published (not draft) so users
+          # can download immediately — add `--draft` here to gate it instead.
+          if gh release view "$TAG" --repo "$PUB" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --repo "$PUB" --clobber
+            gh release edit "$TAG" --repo "$PUB" --notes-file notes.md
+          else
+            gh release create "$TAG" assets/* \
+              --repo "$PUB" \
+              --title "Jodd $TAG" \
+              --notes-file notes.md
+          fi

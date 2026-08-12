@@ -1,0 +1,145 @@
+# Pull-request CI for Jodd: one frontend job, one Rust job, run in parallel.
+#
+# Neither job bundles a Tauri app — that is release.yml's business (tag push /
+# manual dispatch, ~15 min per platform). These two exist to gate a MERGE, so
+# they only do what is cheap and fast on a clean machine.
+#
+# Before this existed the repo had NO pull-request CI at all — release.yml was
+# the only workflow and it never triggers on a PR. A 32-file frontend change
+# could merge with nothing verified on a clean machine.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to a PR makes the in-flight run pointless; don't pay for it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: test · typecheck · build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # src/lib/generated/changelog.json is gitignored and generated from
+      # CHANGELOG.md. The predev/prebuild npm hooks create it locally, but
+      # `vitest run` has no such hook — and whatsNew.ts imports it directly, so
+      # the suite cannot even resolve its imports without this step.
+      - name: Generate changelog
+        run: node scripts/gen-changelog.mjs
+
+      - name: Test
+        run: npm run test
+
+      # Guards the design-token system: WCAG contrast in both themes (composited
+      # against state overlays), Lab dE separation for the categorical graph
+      # palette, no raw rgba()/emoji/Thai in chrome, and that the generated
+      # data-theme blocks stay flat. See src/styles/tokens.test.ts.
+      - name: Typecheck
+        run: npx svelte-check --threshold error
+
+      - name: Build
+        run: npm run build
+
+  # The Rust suite (192 tests as of this job landing) used to run NOWHERE on a
+  # pull request: release.yml is the only workflow that ran cargo, and it
+  # triggers on tag push, i.e. after merge. A sync-correctness regression in
+  # db.rs could reach main with nothing checked — which is exactly how the
+  # `ORDER BY notes.date` lexical-sort bug survived (fixed 2026-07-30).
+  #
+  # Tests only — no bundling, no clippy, no fmt. `cargo test` skips the Tauri
+  # bundler entirely, so this costs minutes rather than the ~15 release.yml
+  # needs per platform.
+  rust:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # First time this repo builds on Linux at all — release.yml's matrix is
+      # macOS + Windows only, so nothing here was ever exercised against apt.
+      # Minimal set for COMPILING (not bundling): libwebkit2gtk-4.1-dev pulls
+      # gtk3 / libsoup-3.0 / javascriptcoregtk-4.1 transitively. Matches the
+      # dep list in Tauri's own `cargo test` CI example. Deliberately absent:
+      # librsvg2-dev + patchelf (AppImage/deb bundler only), xvfb +
+      # webkit2gtk-driver (WebDriver only — we have no e2e suite).
+      #
+      # One Cargo choice keeps this list short, and changing it means revisiting
+      # this: rusqlite uses `bundled` (compiles the amalgamation, so no
+      # libsqlite3-dev).
+      #
+      # NOT reqwest, despite what this comment used to claim. `rustls-tls` is
+      # an ADDITIVE feature — it does not switch `default-tls` off — so reqwest
+      # still links native-tls and pulls openssl-sys. This job passes only
+      # because the GitHub runner image happens to ship OpenSSL headers; on a
+      # bare ubuntu:24.04 the build fails with "The system library `openssl`
+      # ... was not found". The gate depends on something it never declared.
+      # Fixing it properly means `default-features = false`, which moves the
+      # desktop builds off the OS trust store onto webpki roots — a real
+      # behaviour change for anyone behind a corporate proxy, so it belongs in
+      # its own change rather than here.
+      - name: Tauri Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
+
+      # A credential store for the tests that exercise one.
+      #
+      # keyring-core registers a real platform store — on Linux, secret-service
+      # over D-Bus — and a headless runner has no keyring daemon, so
+      # `Entry::new` fails with `org.freedesktop.secrets was not provided by any
+      # .service files` and eight tests panic. That is CI lacking a service, not
+      # the code being wrong: `accounts::load_refresh_token` maps the same
+      # failure to `None` ("not signed in"), so a Linux desktop without a
+      # keyring runs the app fine.
+      #
+      # Installing gnome-keyring rather than skipping those tests on Linux,
+      # because ubuntu is the ONLY platform the merge gate runs: skipping would
+      # leave the credential store — the thing most likely to lose a user's
+      # refresh token — with no automated coverage anywhere before merge.
+      - name: Secret service for the credential-store tests
+        run: sudo apt-get install -y gnome-keyring
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # `. -> target` because the repo root is the Cargo workspace and build
+      # output lands at repo-root target/, NOT src-tauri/target/ (see CLAUDE.md
+      # edge #7). Same value release.yml uses — keep them in step.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      # --workspace covers both members (jodd + jodd-mcp). --locked fails the
+      # build if Cargo.lock would need to change, so a dependency drifts in a
+      # commit rather than silently on a runner.
+      #
+      # Wrapped in `dbus-run-session` so the secret-service store installed
+      # above has a session bus to appear on: gnome-keyring-daemon registers
+      # `org.freedesktop.secrets` there, and keyring-core's Linux provider
+      # looks it up by that name. The daemon needs a password on stdin to
+      # unlock — the value is irrelevant (this keyring is created fresh inside
+      # the session and discarded with it), only that one is supplied.
+      #
+      # The `set -e` matters: without it the pipeline's exit status would be
+      # the daemon's, and a failing `cargo test` would report success.
+      - name: Test
+        run: |
+          set -e
+          dbus-run-session -- bash -c '
+            set -e
+            echo -n "ci" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --workspace --locked
+          '
