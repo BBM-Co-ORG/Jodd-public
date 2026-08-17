@@ -1,0 +1,198 @@
+# Android SQLCipher round-trip proof — standalone.
+#
+# Split out of release.yml so it can be exercised on its own with
+# `gh workflow run android-encryption.yml` (or the Actions tab) in ~20
+# minutes, instead of only as part of a full ~40-minute release run that
+# also builds every desktop bundle. That mattered the moment the job
+# needed debugging: it had never once passed since being added, and the
+# only way to retry it was to spend a whole release pipeline.
+#
+# Also runs automatically when the code it actually proves changes —
+# db_crypto.rs, the Cargo manifests, or this file — so a regression
+# surfaces on the PR that causes it rather than at release time.
+#
+# Deliberately NOT on every push to main: it boots an emulator and takes
+# ~20 minutes, which is too slow to gate unrelated work on.
+name: Android encryption
+
+on:
+  workflow_dispatch:
+  # Called by release.yml so a release cannot publish without this proof —
+  # `workflow_call` rather than a copy of the job, so there is exactly one
+  # definition to keep correct. Path filters below do not apply to a call.
+  workflow_call:
+  push:
+    paths:
+      - 'src-tauri/src/db_crypto.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/android-encryption.yml'
+  pull_request:
+    paths:
+      - 'src-tauri/src/db_crypto.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/android-encryption.yml'
+
+jobs:
+  # that it cross-compiles (build-android above already covers "it compiles"
+  # for the real ABIs, incl. aarch64-linux-android, as a side effect of
+  # building the app). This job targets x86_64-linux-android specifically to
+  # match the emulator's arch: x86_64 below — GitHub-hosted ubuntu-latest
+  # runners lack hardware-accelerated ARM emulation, so an aarch64 binary
+  # pushed onto this emulator would fail outright with no ART/binfmt
+  # translation for a raw native binary run via adb shell. See
+  # docs/superpowers/plans/2026-08-13-at-rest-encryption.md task 9.
+  android-encryption-roundtrip:
+    name: Android SQLCipher round-trip proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # v0.24.0/v0.24.1's first release runs both died here:
+      # "FATAL | Not enough space to create userdata partition. Available:
+      # 4867 MB, need: 7372 MB." By the time this job reaches the emulator
+      # step it has already done checkout + npm ci + npm run build + Android
+      # SDK + NDK 27.3 install, which is enough to eat into ubuntu-latest's
+      # free space that the API-30 google_apis x86_64 AVD's 7.3GB userdata
+      # partition no longer fits. Deterministic, not a flake — reproduced
+      # twice. Removing preinstalled tooling this job never uses (.NET, GHC,
+      # the setup-* tool cache) reliably frees 20GB+ on GitHub-hosted
+      # runners; deliberately NOT touching /usr/local/lib/android since
+      # android-actions/setup-android below both reads and repopulates it.
+      - name: Free disk space (unused preinstalled tooling only)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      # Without this the emulator step logs "disable Linux hardware
+      # acceleration: true" and then times out after the full 600s boot
+      # window — v0.24.1's re-run died exactly there, with adb reporting
+      # `device 'emulator-5554' not found` on every poll. GitHub-hosted
+      # ubuntu runners DO expose /dev/kvm, but its group ownership leaves
+      # the runner user without access, so android-emulator-runner's
+      # `disable-linux-hw-accel: auto` probe correctly concludes there is
+      # no acceleration and falls back to pure software emulation — far
+      # too slow to boot an API-30 google_apis x86_64 image in time.
+      # Granting access is the fix the action's own README prescribes.
+      # Deterministic, not a flake: the same failure reproduced on both
+      # attempts, and re-running alone will never clear it.
+      - name: Enable KVM group permissions (emulator needs hardware accel)
+        run: |
+          echo "=== before ==="
+          ls -l /dev/kvm || echo "MISSING: /dev/kvm does not exist"
+          grep -Ec '(vmx|svm)' /proc/cpuinfo || echo "cpuinfo: no vmx/svm flag"
+          lsmod | grep -i kvm || echo "lsmod: no kvm module loaded"
+          id
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          # `trigger` only QUEUES the event — it does not wait for udev to
+          # apply the new mode. The first attempt at this fix asserted on
+          # /dev/kvm ~30ms after trigger and failed; an otherwise identical
+          # run that happened to do a little more work in between passed.
+          # That difference is a race, not a real change in the runner, so
+          # settle here rather than leave a coin-flip in CI.
+          sudo udevadm settle
+          echo "=== after ==="
+          ls -l /dev/kvm
+          # Safe to hard-fail now that the race is gone: this fails in
+          # seconds, where the same problem downstream costs a 10-minute
+          # emulator boot timeout.
+          [ -r /dev/kvm ] && [ -w /dev/kvm ]
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust Android target
+        run: rustup target add x86_64-linux-android
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;27.3.13750724"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # Same requirement as the build-mcp job below: this compiles jodd_lib,
+      # whose lib.rs calls tauri::generate_context!() unconditionally, and that
+      # macro embeds ../dist at COMPILE time per tauri.conf.json's frontendDist.
+      # dist/ is gitignored, so without this step the cargo build fails with a
+      # missing-directory error before a single test is compiled.
+      - name: Build frontend (dist/ embedded by generate_context! at compile time)
+        run: npm run build
+
+      - name: Cross-compile the encryption round-trip test (no run yet)
+        working-directory: src-tauri
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+          # openssl-src's Android build looks for ANDROID_NDK_ROOT, not
+          # ANDROID_NDK_HOME; set all three spellings rather than guess.
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+        run: |
+          # Unlike build-android, this job links a Rust *binary* for Android
+          # directly with cargo rather than through Tauri's Android tooling, so
+          # nothing wires up the NDK toolchain for us: rust-lld/cc would fall
+          # back to the host compiler, and openssl-src's vendored OpenSSL build
+          # needs a real Android cross-compiler (CC/AR) on top of that. Point
+          # cargo and the cc/openssl-src build scripts at the NDK's own clang
+          # wrapper for API 30 — the emulator's api-level below.
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android30-clang"
+          export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android30-clang++"
+          export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
+          export RANLIB_x86_64_linux_android="$TOOLCHAIN/llvm-ranlib"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$CC_x86_64_linux_android"
+          for f in "$CC_x86_64_linux_android" "$AR_x86_64_linux_android"; do
+            [ -x "$f" ] || { echo "ERROR: NDK tool missing: $f"; ls "$TOOLCHAIN" || true; exit 1; }
+          done
+          cargo test --lib db_crypto::tests::android_round_trip_key_encrypt_reopen \
+            --target x86_64-linux-android --no-run \
+            --message-format=json > /tmp/test-build.json
+          # Extract the path to the compiled test binary from cargo's JSON output.
+          python3 -c "
+          import json
+          for line in open('/tmp/test-build.json'):
+              msg = json.loads(line)
+              if msg.get('reason') == 'compiler-artifact' and msg.get('profile', {}).get('test'):
+                  print(msg['executable'])
+          " | tail -1 > /tmp/test-binary-path.txt
+          cp "$(cat /tmp/test-binary-path.txt)" /tmp/android-roundtrip-test
+
+      - name: Boot Android emulator and run the test on-device
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          script: |
+            adb push /tmp/android-roundtrip-test /data/local/tmp/android-roundtrip-test
+            adb shell chmod +x /data/local/tmp/android-roundtrip-test
+            adb shell "mkdir -p /data/local/tmp/jodd-test-dir"
+            # The test-name filter belongs HERE, not on the cargo line above:
+            # `cargo test <filter> --no-run` only builds, so the filter there
+            # is inert and the pushed binary is the whole --lib test suite.
+            # Without it this ran all 610 tests on-device — 21 of which fail
+            # by construction, since a bare binary launched via `adb shell`
+            # has no Activity and therefore no JNI/ndk_context, so every
+            # keychain-backed test (secrets::*, the keychain round-trips, the
+            # db::tests_open_encryption set) cannot work, and ipc_contract::*
+            # scans a source tree that isn't on the device. Harmless but
+            # noisy: the log ended in "test result: FAILED. 589 passed; 21
+            # failed", masked by the grep below, which reads as a broken
+            # build to anyone opening it. This test uses JODD_TEST_DIR rather
+            # than the keychain, which is exactly why it can pass here.
+            adb shell "JODD_TEST_DIR=/data/local/tmp/jodd-test-dir /data/local/tmp/android-roundtrip-test db_crypto::tests::android_round_trip_key_encrypt_reopen --exact --nocapture" | tee /tmp/emulator-test-output.txt
+            # Two assertions, because `adb shell`'s exit code is not reliably
+            # the binary's: the target test reported ok, AND nothing else in
+            # the run failed.
+            grep -q "test db_crypto::tests::android_round_trip_key_encrypt_reopen ... ok" /tmp/emulator-test-output.txt
+            grep -q "^test result: ok\." /tmp/emulator-test-output.txt

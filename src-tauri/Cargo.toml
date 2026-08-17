@@ -1,0 +1,129 @@
+[package]
+name = "jodd"
+version = "0.24.1"
+description = "Local-first notes across devices"
+authors = ["BBM Co"]
+edition = "2021"
+default-run = "jodd"
+
+[lib]
+name = "jodd_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# reqwest is declared per-target, at the bottom of this file with the other
+# target tables — NOT here. A `[target....]` header placed mid-`[dependencies]`
+# silently reparents every key below it into that table.
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+urlencoding = "2"
+# Credential storage. keyring-core is the API layer (Entry, CredentialStore,
+# set_default_store); platform stores are separate crates selected per target.
+# We depend on them directly instead of the `keyring` distribution crate,
+# because that crate's v1 shim never registers a store on Android at all
+# (keyring-4.1.5/src/v1.rs), and initializes lazily behind a guard that lets a
+# late thread skip initialization instead of waiting for it. Registration here
+# is explicit and happens once, in secrets::init().
+keyring-core = "1"
+dotenv = "0.15"
+quoted_printable = "0.5"
+sha2 = "0.10"
+rand = "0.8"
+dirs = "5"
+# Local SQLite cache, encrypted at rest via SQLCipher. `bundled-sqlcipher-vendored-openssl`
+# builds SQLCipher from source with a vendored, cross-compiled OpenSSL as the crypto
+# backend — chosen over LibTomCrypt after a PoC found LibTomCrypt unreachable through this
+# crate's build script and carrying a confirmed crash bug in every SQLCipher version the
+# Rust ecosystem vendors. See docs/superpowers/specs/2026-08-13-at-rest-encryption-design.md.
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+async-trait = "0.1"
+thiserror = "1"
+which = "6"  # for resolving `claude` binary path at startup
+mail-parser = "0.9"
+walkdir = "2"
+tempfile = "3"
+tauri-plugin-deep-link = "2.4.9"
+ammonia = "4"
+html5ever = "0.39"
+markup5ever_rcdom = "0.39"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = "1"
+# Direct, not transitive: android-native-keyring-store reaches the Keystore
+# through ndk_context::android_context(), which PANICS if nobody handed it the
+# JavaVM and Activity first. Nothing in the stack does — see the comment on
+# secrets::init_ndk_context — so we initialize it ourselves and need the crate
+# by name. Must stay pinned to whatever android-native-keyring-store resolves,
+# since two copies would mean two separate context slots.
+ndk-context = "0.1"
+
+# The desktop-only OAuth loopback listener (auth::wait_for_callback_blocking).
+# Excluded from Android deliberately, not incidentally: it binds 0.0.0.0:8080,
+# which on a phone is an unauthenticated HTTP server exposed to every other app
+# and to the local network. Android takes the auth code from an App Links
+# Intent instead — see auth::redirect_uri.
+#
+# reqwest is per-target because Android needs a different TLS stack, not merely
+# different packaging. `rustls-tls` is ADDITIVE: it does not switch
+# `default-tls` off, so with default features on, reqwest links native-tls ->
+# openssl-sys and, at runtime, actually USES native-tls — nothing in this crate
+# calls `.use_rustls_tls()`, and all 22 client sites are `reqwest::Client::new()`.
+# Android has no OpenSSL to link against and the build dies in openssl-sys'
+# build script.
+#
+# Desktop keeps exactly the line it has always had: same TLS backend, same OS
+# trust store, no behavior change for existing users. Switching desktop to
+# rustls would move certificate verification to bundled webpki roots and break
+# anyone behind a proxy with a private CA — a real regression on the platform
+# this branch promised not to touch.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tiny_http = "0.12"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Android drops `default-tls` and adds back the rest of what reqwest's
+# `default` provides (`charset`, `http2`, `system-proxy`), leaving rustls with
+# webpki-roots as the only TLS path.
+[target.'cfg(target_os = "android")'.dependencies.reqwest]
+version = "0.12"
+default-features = false
+features = ["json", "rustls-tls", "charset", "http2", "system-proxy"]
+
+[dev-dependencies]
+mockito = "1"
+
+# Dev/debug binaries live in examples/, NOT src/bin/. Reason: Tauri's bundler
+# iterates over every [[bin]] in Cargo.toml (including auto-discovered
+# src/bin/*.rs targets) and copies each into Jodd.app/Contents/MacOS/. A
+# Cargo `required-features` gate doesn't help — Tauri still tries to copy
+# and errors out. macOS Tahoe (26.x) launchd then refuses to spawn ad-hoc
+# bundles with multiple binaries in MACOS/ anyway. Examples (`cargo run
+# --example <name>`) are invisible to Tauri's bundler — that's the right
+# home for run-once integration tests against live accounts.
+
+# The release profile lives in the workspace-root Cargo.toml, not here. Cargo
+# ignores `[profile.*]` in a non-root member — it warns and uses the defaults,
+# which is exactly what happened between 2026-07-15 and 2026-07-30. Do not
+# move it back.
