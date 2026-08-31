@@ -1,0 +1,29 @@
+[workspace]
+members = ["src-tauri", "jodd-mcp"]
+resolver = "2"
+
+# Release profile — optimize for the shipped binary. Trade compile time for a
+# smaller binary + faster startup. `opt-level="s"` favors size; switch to "z"
+# for even smaller (at perf cost) or 3 for max speed. `panic="abort"` drops
+# unwinder code (there is no catch_unwind in either member) — a couple hundred
+# KB smaller.
+#
+# MUST live here, at the workspace root. Cargo reads `[profile.*]` from the
+# root manifest ONLY and silently ignores a member's, printing
+# "profiles for the non root package will be ignored" and carrying on with the
+# defaults. This block sat in src-tauri/Cargo.toml from f8850b4 (2026-07-15),
+# when jodd-mcp turned src-tauri into a workspace member, until 2026-07-30 —
+# so every release built in that window shipped unstripped, un-LTO'd,
+# opt-level=3 and panic=unwind. Measured on 0.20.1 across the move:
+#
+#   ignored -> applied:  binary 21 MB -> 8.2 MB, symbols 53,948 -> 428,
+#                        dmg 8.4 MB -> 4.3 MB, release build 4m26s
+#
+# If a future build warns about non-root profiles again, or a release artifact
+# doubles in size, this is the first thing to check.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = "s"
