@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Android adaptive-icon FOREGROUND layer.
+
+  This is a separate source from `source.svg` on purpose, and the two want
+  opposite things. macOS 26 masks every app icon into its own squircle and
+  reads the artwork's alpha AT THE CANVAS EDGE: art that reaches the edge is
+  drawn edge to edge, art with a transparent margin gets a system-drawn grey
+  plate behind it. So `source.svg` must stay full-bleed. Android hands the
+  launcher two 108dp layers, crops away the outer 18dp per side, and applies
+  a launcher-chosen mask to what is left — so the layer carrying the mark
+  must stay well inside. One artwork cannot satisfy both; this is Android's.
+
+  Geometry, on the 1024px canvas `tauri icon` renders down to each density:
+
+    108dp layer            1024px
+    72dp viewport            683px   what survives the crop
+    66dp safe circle         626px   diameter every mask is guaranteed to hold
+    card side                400px   39% of the canvas
+
+  The card is square, so its corners sit at half-diagonal 400·√2/2 = 283px
+  from the centre — inside the 313px safe radius, with ~3dp to spare. The
+  slack is not padding for its own sake: at mdpi the whole layer is 48px, so
+  a card sized to the last pixel of the circle puts its antialiased corner
+  outside it. Enlarging the card is what clips it, and
+  `scripts/android-adaptive-icon.test.mjs` measures exactly this.
+
+  A larger card does still fit the arithmetic — 430px was tried — but it sits
+  hard against the circle with no visible field around it under a round mask.
+  This is the size where the mark still reads as a card resting on a field.
+
+  Two things from `source.svg` are deliberately absent. The off-white disc:
+  the field is the background layer's job here, and a disc inside a launcher
+  mask reads as a shape inside a shape. And both drop-shadow filters: they
+  put faint alpha outside the card's own bounds, which is art the mask can
+  clip and which would make the measurement above a matter of thresholds
+  rather than geometry.
+
+  `android_fg_scale` in `tauri icon`'s manifest looks like it would do the
+  insetting instead. It does not — measured on tauri-cli 2.11.2, scales 10
+  through 100 produce byte-identical foregrounds. The inset lives here.
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Header bar: the Ink & Dusk ramp, same stops as source.svg -->
+    <linearGradient id="cool" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2b3e7a"/>
+      <stop offset="55%" stop-color="#7a6caf"/>
+      <stop offset="100%" stop-color="#d9a866"/>
+    </linearGradient>
+
+    <!-- Fold underside: cream paper → kraft warm gray -->
+    <linearGradient id="foldCurl" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbf6ec"/>
+      <stop offset="55%" stop-color="#e8dcc4"/>
+      <stop offset="100%" stop-color="#a08b6a"/>
+    </linearGradient>
+
+    <!-- Wordmark: deeper trio for legibility on white -->
+    <linearGradient id="wordmark" x1="0%" y1="0%" x2="100%" y2="15%">
+      <stop offset="0%" stop-color="#1d2b5a"/>
+      <stop offset="55%" stop-color="#4c3f7e"/>
+      <stop offset="100%" stop-color="#a07237"/>
+    </linearGradient>
+
+    <!-- Hinge shadow on main paper from the lifted curl -->
+    <linearGradient id="hingeShadow" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Radial shadow pooled under the curled tip -->
+    <radialGradient id="curlPool" cx="65%" cy="80%" r="55%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!--
+    The card is authored in source.svg's own coordinates — a 600×600 sheet
+    with its top-left at (200,220), so its centre is (500,520) — and then
+    placed by this one transform. Keeping the drawing coordinates identical
+    is what lets the two files stay recognisably the same mark; only the
+    placement differs. 400/600 is the card side above.
+  -->
+  <g transform="translate(512 512) scale(0.666667) translate(-500 -520)">
+    <!-- Main paper sheet — corner cut for the fold -->
+    <path d="M200 220 H680 L800 340 V820 H200 Z" fill="#ffffff"/>
+
+    <!-- Header bar — Ink & Dusk gradient -->
+    <rect x="200" y="220" width="480" height="64" fill="url(#cool)"/>
+
+    <!-- Soft inward shadow on the paper near the hinge -->
+    <rect x="630" y="220" width="50" height="120" fill="url(#hingeShadow)"/>
+
+    <!-- Radial pool of shadow under the curled tip -->
+    <path d="M680 220 L800 340 L680 340 Z" fill="url(#curlPool)"/>
+
+    <!-- The peeled corner: curved hypotenuse for a real page-peel feel -->
+    <path d="M680 220
+             Q762 252 800 340
+             L680 340 Z"
+          fill="url(#foldCurl)"/>
+
+    <!-- Crease highlight along the curl -->
+    <path d="M683 222 Q762 254 797 338"
+          fill="none" stroke="#ffffff" stroke-width="2.5"
+          opacity="0.55" stroke-linecap="round"/>
+
+    <!-- Wordmark "Jodd" -->
+    <text x="500" y="560"
+          font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+          font-size="200"
+          font-weight="800"
+          text-anchor="middle"
+          fill="url(#wordmark)"
+          letter-spacing="-6">Jodd</text>
+
+    <!-- Handwritten note lines — warm muted gray, matches the palette -->
+    <line x1="290" y1="680" x2="710" y2="680"
+          stroke="#d6cfc1" stroke-width="14" stroke-linecap="round"/>
+    <line x1="290" y1="740" x2="600" y2="740"
+          stroke="#d6cfc1" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>

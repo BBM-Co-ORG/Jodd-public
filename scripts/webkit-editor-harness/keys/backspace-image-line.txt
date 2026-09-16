@@ -1,0 +1,15 @@
+js window.INITIAL = '<div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div><h2>Heading</h2>'; window.CARET = ['h2','start']; window.setup(); 0
+key backspace
+snap Backspace, image line above (native)
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

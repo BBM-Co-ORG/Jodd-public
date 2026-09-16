@@ -1,0 +1,8 @@
+Enter on nested empty line | <blockquote><div>a</div></blockquote><div><br></div><div>after</div>   caret=DIV@0
+typed z                    | <blockquote><div>a</div></blockquote><div>z</div><div>after</div>   caret="z"@1
+cmd+z #1                   | <blockquote><div>a</div></blockquote><div><br></div><div>after</div>   caret=DIV@0
+cmd+z #2                   | <blockquote><div>a</div><div><br></div></blockquote><div>after</div>   caret=DIV@1
+cmd+z #3                   | <blockquote><div>a</div><div><br></div></blockquote><div>after</div>   caret=DIV@1
+redo #1                    | <blockquote><div>a</div></blockquote><div><br></div><div>after</div>   caret=DIV@0
+redo #2                    | <blockquote><div>a</div></blockquote><div>z</div><div>after</div>   caret="z"@1
+redo #3                    | <blockquote><div>a</div></blockquote><div>z</div><div>after</div>   caret="z"@1

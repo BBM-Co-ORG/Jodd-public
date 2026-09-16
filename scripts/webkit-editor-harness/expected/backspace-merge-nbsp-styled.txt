@@ -1,0 +1,8 @@
+Backspace, nbsp line, ul a | <ul><li>item</li></ul><h2 style="margin-left: 28px;">Heading</h2>   caret=H2@0
+typed z                    | <ul><li>item</li></ul><h2 style="margin-left: 28px;">zHeading</h2>   caret="zHeading"@1
+cmd+z #1                   | <ul><li>item</li></ul><h2 style="margin-left: 28px;">Heading</h2>   caret=H2@0
+cmd+z #2                   | <ul><li>item</li></ul><div>&nbsp;</div><h2 style="margin-left: 28px;">Heading</h2>   caret=UL@1
+cmd+z #3                   | <ul><li>item</li></ul><div>&nbsp;</div><h2 style="margin-left: 28px;">Heading</h2>   caret=UL@1
+redo #1                    | <ul><li>item</li></ul><h2 style="margin-left: 28px;">Heading</h2>   caret="item"@4
+redo #2                    | <ul><li>item</li></ul><h2 style="margin-left: 28px;">zHeading</h2>   caret="zHeading"@1
+redo #3                    | <ul><li>item</li></ul><h2 style="margin-left: 28px;">zHeading</h2>   caret="zHeading"@1

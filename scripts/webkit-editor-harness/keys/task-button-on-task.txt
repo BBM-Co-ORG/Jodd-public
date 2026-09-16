@@ -1,0 +1,13 @@
+js window.INITIAL = '<div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div>next</div>'; window.CARET = ['div','end']; window.setup(); 0
+key shift+cmd+9
+snap checklist button on a task row
+type !
+snap typed !
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2

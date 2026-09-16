@@ -1,0 +1,7 @@
+typed x                    | <ul><li>buy milkx</li></ul>   caret="buy milkx"@9
+addTag, note ends in a lis | <ul><li>buy milkx</li></ul>#work   caret=BODY@3
+addTag home                | <ul><li>buy milkx</li></ul>#work #home   caret=BODY@3
+cmd+z #1                   | <ul><li>buy milk</li></ul>   caret=LI@1
+cmd+z #2                   | <ul><li>buy milk</li></ul>   caret=LI@1
+redo #1                    | <ul><li>buy milkx</li></ul>#work #home   caret="#work #home"@11
+redo #2                    | <ul><li>buy milkx</li></ul>#work #home   caret="#work #home"@11
