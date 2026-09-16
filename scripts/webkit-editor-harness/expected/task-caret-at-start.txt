@@ -1,0 +1,8 @@
+formatTask, caret at line  | <div>first</div><div><input type="checkbox" contenteditable="false">&nbsp;second</div>   caret=" second"@1
+typed t                    | <div>first</div><div><input type="checkbox" contenteditable="false">&nbsp;tsecond</div>   caret=" tsecond"@2
+cmd+z #1                   | <div>first</div><div><input type="checkbox" contenteditable="false">&nbsp;second</div>   caret=" second"@1
+cmd+z #2                   | <div>first</div><div>second</div>   caret="second"@0
+cmd+z #3                   | <div>first</div><div>second</div>   caret="second"@0
+redo #1                    | <div>first</div><div><input type="checkbox" contenteditable="false">&nbsp;second</div>   caret=" second"@1
+redo #2                    | <div>first</div><div><input type="checkbox" contenteditable="false">&nbsp;tsecond</div>   caret=" tsecond"@2
+redo #3                    | <div>first</div><div><input type="checkbox" contenteditable="false">&nbsp;tsecond</div>   caret=" tsecond"@2

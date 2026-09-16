@@ -1,0 +1,108 @@
+[workspace]
+members = ["src-tauri", "jodd-mcp"]
+resolver = "2"
+
+# Release profile — optimize for the shipped binary. Trade compile time for a
+# smaller binary + faster startup. `opt-level="s"` favors size; switch to "z"
+# for even smaller (at perf cost) or 3 for max speed. `panic="abort"` drops
+# unwinder code (there is no catch_unwind in either member) — a couple hundred
+# KB smaller.
+#
+# MUST live here, at the workspace root. Cargo reads `[profile.*]` from the
+# root manifest ONLY and silently ignores a member's, printing
+# "profiles for the non root package will be ignored" and carrying on with the
+# defaults. This block sat in src-tauri/Cargo.toml from f8850b4 (2026-07-15),
+# when jodd-mcp turned src-tauri into a workspace member, until 2026-07-30 —
+# so every release built in that window shipped unstripped, un-LTO'd,
+# opt-level=3 and panic=unwind. Measured on 0.20.1 across the move:
+#
+#   ignored -> applied:  binary 21 MB -> 8.2 MB, symbols 53,948 -> 428,
+#                        dmg 8.4 MB -> 4.3 MB, release build 4m26s
+#
+# If a future build warns about non-root profiles again, or a release artifact
+# doubles in size, this is the first thing to check.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = "s"
+
+# ─── Vendored fixes: TWO wry Android crashes ────────────────────────────────
+#
+# Both are the same shape — wry's Android glue treating an ordinary Android
+# absence as impossible — and both kill the process rather than returning an
+# error. They were found six weeks apart, in the same file, by the same
+# backend. If a third turns up, look for it in `main_pipe.rs` first.
+#
+# **(1) `getCookies` on a URL with no cookies.** `RustWebView.getCookies(url)`
+# returns `CookieManager.getCookie(url)` from a NON-NULL Kotlin `String`.
+# Android returns null there whenever the URL has no cookies — documented,
+# ordinary behaviour — so Kotlin's intrinsic null check throws an uncaught
+# NullPointerException on the main thread and the app dies. Measured on a
+# Galaxy S23 FE: `cookies_for_url("https://idmsa.apple.com")` right after a
+# successful read of icloud.com killed the process.
+#
+# **(2) `get_webview` after the activity is gone.** `OnDestroy` removes the
+# activity from `ACTIVITY_PROXY` whenever Android destroys it — the back
+# gesture being the ordinary case — while the process keeps running. Any
+# message handled in that window unwrapped a `None` and aborted with SIGABRT.
+# Measured on the same phone, 2026-09-10: ~26 s after the back gesture, a
+# harvest tick panicked at `main_pipe.rs:121`. Intermittent, because it needs a
+# message to land inside that window. The function already returns `Option` and
+# all nine call sites are written `if let Some(webview) = …`, so `None` is the
+# case they were built for.
+#
+# **This blocks the iCloud backend on Android specifically**, because that is
+# the one backend whose credential IS a cookie jar: harvesting reads across
+# several Apple domains (icloud.com, idmsa.apple.com, the p<N>-ckdatabasews
+# partition host) and cannot know in advance which of them currently hold
+# cookies. `cookies()` — the whole-jar read every desktop platform uses
+# (gotcha #19) — is a hardcoded stub returning empty on Android, so
+# `cookies_for_url` is the only door, and it is the one that crashes.
+#
+# Pinned to a REV, not a branch: a branch could move under us and change what
+# a rebuild compiles. The rev is the 0.55.1 tag plus both one-line fixes —
+# tauri 2.11.5 requires ^0.55, so the upstream PR's branch (cut from `dev`,
+# now 0.57) cannot satisfy this and is deliberately not what we point at.
+#
+# **(3) R8 strips the JNI-only methods in a RELEASE build.** wry ships its own
+# keep list (`proguard-wry.pro`), and it names only loadUrlMainThread,
+# loadHTMLMainThread and evalScript — while its Rust side also calls
+# `getCookies` and `clearAllBrowsingData` over JNI, from nowhere in Kotlin. So a
+# minified build drops both and the first iCloud sign-in dies with
+# `NoSuchMethodError … RustWebView;.getCookies`. Measured on the signed 0.28.0
+# release APK: its dex holds the class and zero of either method name; the debug
+# dex of the same commit holds both. Debug builds are not minified, which is why
+# every Android device pass before 2026-09-16 missed it.
+#
+# **Remove this whole block only when tauri's own dependency moves to a wry
+# that carries ALL THREE fixes**, and verify on a device — not by assuming the
+# version number implies it. Fix (2) has no upstream issue or PR yet.
+#
+# Upstream: https://github.com/tauri-apps/wry/issues/1837
+#           https://github.com/tauri-apps/wry/pull/1838
+[patch.crates-io]
+wry = { git = "https://github.com/bbmediaco/wry.git", rev = "4c4d37cb42ec6ec84dcf773fd8209910626f48c2" }
+# tao — Android strands IPC replies at startup (gotcha #32).
+#
+# tao 0.35's `run_return` drained the EventLoopProxy queue only when
+# `poll_all()` returned ALOOPER_POLL_WAKE. Android swallows that wake whenever
+# a lifecycle event (the ndk_glue pipe) is ready in the same poll, and every
+# IPC reply on Android travels through that queue as an eval — so a reply to
+# `invoke` could wait forever for an unrelated wake. What the user saw: a
+# signed-in install stuck on AuthScreen with no iCloud button. Measured on a
+# Galaxy S711B with a 3 s sleep forced into `.setup()`: 3/3 launches stalled
+# without the fix, 0/3 with it.
+#
+# Pinned to a REV for the same reason as wry above: the tao-v0.35.3 tag plus
+# the backport of tauri-apps/tao#1304. Upstream released that only in tao
+# 0.37, which tauri-runtime-wry 2.x (`tao ^0.35`) cannot take.
+#
+# **Remove this line when tauri's own dependency moves to a tao that carries
+# #1304**, and verify with gotcha #32's forced-delay probe — not by reading
+# the version number.
+#
+# Upstream: https://github.com/tauri-apps/tao/pull/1304
+#           https://github.com/tauri-apps/tauri/issues/14994
+tao = { git = "https://github.com/bbmediaco/tao.git", rev = "d6ba6dc988b15e8e56cf0134ae815718cea3b991" }

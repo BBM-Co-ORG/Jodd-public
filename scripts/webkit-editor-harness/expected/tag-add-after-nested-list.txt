@@ -1,0 +1,5 @@
+addTag, note ends in a nes | <ul><li>a<ul><li>nested</li></ul></li></ul>#work   caret=BODY@3
+cmd+z #1                   | <ul><li>a<ul><li>nested</li></ul></li></ul>   caret="nested"@6
+cmd+z #2                   | <ul><li>a<ul><li>nested</li></ul></li></ul>   caret="nested"@6
+redo #1                    | <ul><li>a<ul><li>nested</li></ul></li></ul>#work   caret="#work"@5
+redo #2                    | <ul><li>a<ul><li>nested</li></ul></li></ul>#work   caret="#work"@5

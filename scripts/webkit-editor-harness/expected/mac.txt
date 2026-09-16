@@ -1,0 +1,6 @@
+typed "abc def"            | <div>first line</div><div>abc def</div>   caret="abc def"@7
+ctrl+a (native: line start | <div>first line</div><div>abc def</div>   caret="abc def"@0
+ctrl+e (native: line end)  | <div>first line</div><div>abc def</div>   caret="abc def"@7
+ctrl+b (native: back 1 cha | <div>first line</div><div>abc def</div>   caret="abc def"@6
+ctrl+cmd+z (must NOT undo) | <div>first line</div><div>abc def</div>   caret="abc def"@6
+cmd+z (undo)               | <div>first line</div><div><br></div>   caret=DIV@1

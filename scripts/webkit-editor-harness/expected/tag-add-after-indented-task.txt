@@ -1,0 +1,5 @@
+addTag after indented task | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div style="margin-left: 28px;">#work</div>   caret=BODY@3
+cmd+z #1                   | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;ship it</div>   caret=" ship it"@8
+cmd+z #2                   | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;ship it</div>   caret=" ship it"@8
+redo #1                    | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div style="margin-left: 28px;">#work</div>   caret="#work"@5
+redo #2                    | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div style="margin-left: 28px;">#work</div>   caret="#work"@5

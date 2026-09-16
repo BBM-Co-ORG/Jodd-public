@@ -1,0 +1,6 @@
+typed x                    | <div>plain</div><div>twox</div>   caret="twox"@4
+two replaceAlls, no typing | <div>P</div><div>TWOx</div>   caret="P"@1
+cmd+z #1                   | <div>plain</div><div>two</div>   caret=DIV@1
+cmd+z #2                   | <div>plain</div><div>two</div>   caret=DIV@1
+redo #1                    | <div>P</div><div>TWOx</div>   caret="P"@1
+redo #2                    | <div>P</div><div>TWOx</div>   caret="P"@1

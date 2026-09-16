@@ -1,0 +1,7 @@
+Backspace, image line abov | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">Heading</div>   caret=DIV@1
+cmd+z #1                   | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div><h2>Heading</h2>   caret=DIV@1
+cmd+z #2                   | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div><h2>Heading</h2>   caret=DIV@1
+cmd+z #3                   | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div><h2>Heading</h2>   caret=DIV@1
+redo #1                    | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">Heading</div>   caret=DIV@1
+redo #2                    | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">Heading</div>   caret=DIV@1
+redo #3                    | <div>above</div><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">Heading</div>   caret=DIV@1

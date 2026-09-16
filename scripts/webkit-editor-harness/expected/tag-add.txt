@@ -1,0 +1,9 @@
+typed x                    | <div>hello worldx</div>   caret="hello worldx"@12
+addTag work (focus in tag  | <div>hello worldx</div><div>#work</div>   caret=BODY@3
+addTag home                | <div>hello worldx</div><div>#work #home</div>   caret=BODY@3
+cmd+z #1                   | <div>hello world</div>   caret=DIV@1
+cmd+z #2                   | <div>hello world</div>   caret=DIV@1
+cmd+z #3                   | <div>hello world</div>   caret=DIV@1
+redo #1                    | <div>hello worldx</div><div>#work #home</div>   caret="#work #home"@11
+redo #2                    | <div>hello worldx</div><div>#work #home</div>   caret="#work #home"@11
+redo #3                    | <div>hello worldx</div><div>#work #home</div>   caret="#work #home"@11
