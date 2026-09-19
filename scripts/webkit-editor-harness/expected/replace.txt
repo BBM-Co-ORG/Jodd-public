@@ -1,0 +1,9 @@
+typed x                    | <div>foo one foox</div><div>two <b>foo</b></div>   caret="foo one foox"@12
+replaceCurrent (focus in f | <div>BAR one foox</div><div>two <b>foo</b></div>   caret=BODY@3
+replaceAll                 | <div>BAR one Q Xx</div><div>two <b>Q X</b></div>   caret=BODY@3
+cmd+z #1                   | <div>foo one foo</div><div>two <b>foo</b></div>   caret=DIV@1
+cmd+z #2                   | <div>foo one foo</div><div>two <b>foo</b></div>   caret=DIV@1
+cmd+z #3                   | <div>foo one foo</div><div>two <b>foo</b></div>   caret=DIV@1
+redo #1                    | <div>BAR one Q Xx</div><div>two <b>Q X</b></div>   caret="BAR one Q Xx"@11
+redo #2                    | <div>BAR one Q Xx</div><div>two <b>Q X</b></div>   caret="BAR one Q Xx"@11
+redo #3                    | <div>BAR one Q Xx</div><div>two <b>Q X</b></div>   caret="BAR one Q Xx"@11

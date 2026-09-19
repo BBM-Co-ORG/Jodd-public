@@ -1,0 +1,5 @@
+{
+  "default": "source-1024.png",
+  "android_fg": "source-android-foreground.svg",
+  "android_bg": "source-android-background.svg"
+}

@@ -1,0 +1,8 @@
+typed x                    | <div>a #work b #workingx</div><div>#home #work</div>   caret="a #work b #workingx"@19
+removeTag work             | <div>a &nbsp;b #workingx</div><div>#home&nbsp;</div>   caret=BODY@3
+cmd+z #1                   | <div>a #work b #working</div><div>#home #work</div>   caret=DIV@1
+cmd+z #2                   | <div>a #work b #working</div><div>#home #work</div>   caret=DIV@1
+cmd+z #3                   | <div>a #work b #working</div><div>#home #work</div>   caret=DIV@1
+redo #1                    | <div>a &nbsp;b #workingx</div><div>#home&nbsp;</div>   caret="a  b #workingx"@2
+redo #2                    | <div>a &nbsp;b #workingx</div><div>#home&nbsp;</div>   caret="a  b #workingx"@2
+redo #3                    | <div>a &nbsp;b #workingx</div><div>#home&nbsp;</div>   caret="a  b #workingx"@2

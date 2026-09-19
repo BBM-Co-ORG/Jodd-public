@@ -1,0 +1,7 @@
+Enter after task (empty ro | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div><input type="checkbox" contenteditable="false">&nbsp;</div>   caret=" "@1
+addTag work                | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div><input type="checkbox" contenteditable="false">&nbsp;</div><div>#work</div>   caret=BODY@3
+addTag home                | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div><input type="checkbox" contenteditable="false">&nbsp;</div><div>#work #home</div>   caret=BODY@3
+cmd+z #1                   | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div>   caret=DIV@2
+cmd+z #2                   | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div>   caret=DIV@2
+redo #1                    | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div><input type="checkbox" contenteditable="false">&nbsp;</div><div>#work #home</div>   caret="#work #home"@11
+redo #2                    | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div><input type="checkbox" contenteditable="false">&nbsp;</div><div>#work #home</div>   caret="#work #home"@11

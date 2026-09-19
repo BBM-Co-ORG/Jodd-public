@@ -1,0 +1,33 @@
+{
+  "mode": "offline comparison preparation; no provider invoked",
+  "corpus_sha256": "a1aa5ecd23020ff3b6542115fcb9a60e7d6f767f70c7a9ee271dc19575227f62",
+  "prompt_sha256": "bf7f9eecf647134653833d90269d5a801372f823faf5072eaaeb9d177ef96dbc",
+  "corpus": "meeting-actions-v1",
+  "corpus_n": 36,
+  "held_out_ids": [
+    "en-01",
+    "en-04",
+    "en-09",
+    "en-10",
+    "th-01",
+    "th-04",
+    "th-09",
+    "th-10",
+    "mixed-01",
+    "mixed-04",
+    "mixed-09",
+    "mixed-10"
+  ],
+  "labels": "agent-authored synthetic; independent human review pending",
+  "status": "pending approved routes and outputs",
+  "routes": [],
+  "selected_default": null,
+  "live_comparison": "pending",
+  "human_acceptance": {
+    "n": 0,
+    "rate": null
+  },
+  "cost_per_accepted_result": null,
+  "time_saved": null,
+  "limitation": "Quote matching does not prove intent or ownership. Reference equality is not human acceptance. Local scoring latency is not provider latency."
+}
