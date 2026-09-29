@@ -1,0 +1,5 @@
+addTag, note ends in a quo | <blockquote>quoted</blockquote><div>#work</div>   caret=BODY@3
+cmd+z #1                   | <blockquote>quoted</blockquote>   caret="quoted"@6
+cmd+z #2                   | <blockquote>quoted</blockquote>   caret="quoted"@6
+redo #1                    | <blockquote>quoted</blockquote><div>#work</div>   caret="#work"@5
+redo #2                    | <blockquote>quoted</blockquote><div>#work</div>   caret="#work"@5

@@ -1,0 +1,9 @@
+Enter → new task           | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;</div>   caret=" "@1
+Enter on empty → exit      | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;"><br></div>   caret=DIV@0
+typed z                    | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;">z</div>   caret="z"@1
+cmd+z #1                   | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;</div>   caret=DIV@0
+cmd+z #2                   | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div>   caret=DIV@2
+cmd+z #3                   | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div>   caret=DIV@2
+redo #1                    | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;</div>   caret=" "@1
+redo #2                    | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;">z</div>   caret="z"@1
+redo #3                    | <div style="margin-left: 28px;"><input type="checkbox" contenteditable="false">&nbsp;task</div><div style="margin-left: 28px;">z</div>   caret="z"@1

@@ -1,0 +1,591 @@
+/* Jodd design tokens.
+ *
+ * Imported once from src/main.ts. A plain stylesheet rather than a Svelte
+ * :global() block: the set is too large to live inside a component, and a real
+ * file keeps the eventual dark-mode media query trivial to add.
+ *
+ * Custom properties inherit through the DOM, so these are visible inside every
+ * component's scoped <style> without any further plumbing.
+ *
+ * Every ratio quoted below was measured (hex -> sRGB relative luminance ->
+ * WCAG 2.1 contrast), not eyeballed. Translucent overlays were composited
+ * against their real backdrop before measuring, because alpha stacks: a badge
+ * on an alpha background inside a row with its own alpha background is three
+ * layers deep, and that is where the failures hide.
+ *
+ * Dark mode lives here in three layers: a light `:root` (above), a
+ * `@media (prefers-color-scheme: dark)` block that follows the OS, and flat
+ * `:root[data-theme='dark']` / `:root[data-theme='light']` overrides that let
+ * an explicit in-app choice beat the OS in either direction. The two
+ * `data-theme` blocks are GENERATED between the `BEGIN`/`END` markers below
+ * and must not be hand-edited directly -- edit the media-query block and
+ * regenerate, or Dark and System(dark) will diverge. A structural test
+ * asserts both stay flat: a nested selector inside `:root[data-theme='dark']`
+ * silently killed the whole block once (a bare nested `:root` desugars to a
+ * descendant selector and matches nothing, so it just stopped applying).
+ */
+
+:root {
+  /* ---- Surfaces: warm, light to dark ---------------------------------- */
+  --surface-editor:   #fffef9;
+  --surface-list:     #faf6ed;
+  --surface-sidebar:  #f0ebe0;
+  --surface-panel:    #ffffff;   /* menus, modals, popovers */
+
+  /* Opaque badge surface. Deliberately NOT an rgba overlay: badges sit inside
+     rows whose own background changes on hover/active, so an alpha badge
+     composites with the row and silently loses contrast as the row darkens.
+     Being opaque makes the text ratio on a badge state-independent. */
+  --surface-badge:    #fffef9;
+
+  /* State overlays. Fine over a static surface; do not put small muted text
+     on top of one that is itself inside another overlay -- see --surface-badge. */
+  --surface-sunken:   rgba(0, 0, 0, 0.04);
+  --surface-hover:    rgba(0, 0, 0, 0.06);
+  --surface-active:   rgba(0, 0, 0, 0.10);
+
+  /* ---- Borders --------------------------------------------------------- */
+  --border-subtle:    #e8e2d4;
+  --border:           #ddd8cc;
+  --border-strong:    #cfcabb;
+
+  /* ---- Text: verified >=4.5:1 on all four base surfaces ---------------- */
+  --text:             #222222;   /* min 13.38:1 (on sidebar) */
+  --text-secondary:   #3d3d3d;   /* CORRECTED (Task 8 follow-up 3): #555555
+                                    left a three-level text ramp collapsed to
+                                    two -- dE(--text-muted, --text-secondary)
+                                    was only 1.68, the same colour to a
+                                    viewer, across 32 + 81 use-sites. Moving
+                                    --text-muted was already forced by the
+                                    OVERLAID audit, so the gap is reopened
+                                    from this end instead: #3d3d3d gives the
+                                    most even three-step ramp (dE(text,sec)
+                                    12.5, dE(sec,muted) 12.1, both >5), worst
+                                    overlaid contrast 7.34:1. */
+  --text-muted:       #595959;   /* CORRECTED (Task 8): the new OVERLAID audit
+                                    (state overlays composited onto a surface
+                                    before measuring) caught what a plain-surface
+                                    check couldn't -- #696969 was 4.62 on plain
+                                    sidebar but only 3.71 on sidebar+active
+                                    (FAIL). This is 4.73 worst-overlayed.
+                                    Replaces #888 #999 #aaa #b0a99a #9a978c and
+                                    the five Tier 0 near-duplicates, which were
+                                    one job done in two different temperatures. */
+  --text-inverse:     #ffffff;
+
+  /* ---- Accent ---------------------------------------------------------- *
+   * Two ambers, and collapsing them into one ships an accessibility
+   * regression that looks like a fix:
+   *     3.29:1  white on #c97c1f   <- fails AA
+   *     5.41:1  white on #9c5a12   <- passes
+   * --accent is for fills, tints and borders with NO text on them.
+   * --accent-action is for anything carrying or being text. */
+  --accent:           #c97c1f;
+  --accent-action:    #8a4800;   /* CORRECTED (Task 8): the OVERLAID audit
+                                    caught #9c5a12 at only 3.65:1 on
+                                    sidebar+active (FAIL) despite clearing
+                                    every plain surface. This is 4.72
+                                    worst-overlayed; white on it improves too
+                                    (was 5.41:1 -- darkening only helps a
+                                    reversed-text ratio). */
+  --accent-hover:     #8f5310;   /* white on it 6.15:1 */
+  --accent-tint:      #f3e4c0;   /* selected chip / pill background */
+  --accent-on-tint:   #3a2f12;   /* 10.45:1 on --accent-tint */
+  --accent-wash:        rgba(201, 124, 31, 0.10);
+  --accent-wash-strong: rgba(201, 124, 31, 0.20);
+  --accent-rail:        rgba(201, 124, 31, 0.55);
+  --accent-border:      rgba(201, 124, 31, 0.25);
+
+  /* ---- Focus: the only remaining use of blue. >=3.83:1 on every surface. */
+  --focus:            #3d78bc;
+  /* One focus ring for the whole app. Two existed: an amber one on
+     .link-prompt-input and a blue one on .prompt-input, for controls that
+     look and behave identically. */
+  --ring-focus:       0 0 0 2px rgba(61, 120, 188, 0.25);
+
+  /* Disabled control text. Exempt from WCAG 1.4.3 (disabled components are
+     explicitly out of scope), so this is deliberately below 4.5:1 -- looking
+     unavailable is the entire job. */
+  --text-disabled:    #8c8c8c;
+
+  /* ---- Status ---------------------------------------------------------- */
+  --danger:           #ac2517;   /* CORRECTED (Task 8): the OVERLAID audit
+                                    caught #c0392b at only 3.67:1 on
+                                    sidebar+active (FAIL) despite 4.57:1 on
+                                    plain sidebar. This is 4.68 worst-overlayed. */
+  --danger-wash:      rgba(192, 57, 43, 0.08);
+  --success:          #0b6823;   /* CORRECTED (Task 9 follow-up): --success was
+                                    never in the audited PAIRS set at all -- a
+                                    coverage gap, not a measured-and-passed
+                                    value. #46a35e measured only 2.65:1 on
+                                    plain sidebar (real uses: .keeper-tag text
+                                    in DupReviewModal, .account-chip-dot in
+                                    Sidebar) and as low as 2.13 sidebar+active.
+                                    This is 4.70 worst-case across
+                                    sidebar/panel plain+overlaid and the
+                                    --success-wash chip backdrop. */
+  --success-wash:     rgba(70, 163, 94, 0.10);
+  --warn-wash:        rgba(201, 124, 31, 0.12);
+
+  /* ---- Semantic icon accents ------------------------------------------ *
+   * A few icons carry meaning that colour communicates faster than shape:
+   * delete is destructive, pinned is marked, a tag is a tag. Everything else
+   * stays currentColor -- colouring every icon turns colour into noise and
+   * removes its ability to mean anything.
+   *
+   * --icon-tag is NOT --graph-tag. That one was picked for Lab dE separation
+   * against three other hues inside the graph, and measures 2.12:1 as a
+   * stroke on a selected sidebar row -- it fails WCAG 1.4.11's 3:1 for a
+   * non-text graphic. Same hue family, different job, different value. */
+  --icon-danger: var(--danger);
+  --icon-pin:    var(--accent-action);
+  --icon-tag:    #7b4ea8;   /* 4.06:1 on sidebar+active; dE 20 from --graph-tag */
+
+  /* ---- Graph view: a CATEGORICAL palette, not theme accent ------------- *
+   * The local graph encodes four relation types by colour (folder / tag /
+   * link / backlink) with a matching legend. These are deliberately NOT
+   * collapsed into --accent/--focus: they are near-duplicates of theme
+   * colours only by coincidence of hue, and merging any two of them would
+   * make two different relation types indistinguishable, which is the one
+   * thing this view exists to show.
+   *
+   * CORRECTED (Task 8 follow-up 2): the ΔE guard only ever ran against the
+   * dark palette. This light set had converged -- folder/tag were dE 5.3
+   * apart (the same swatch to a viewer) -- and nothing measured it. Also:
+   * these are SVG stroke/dot colours (NoteEditor .g-edge/.g-folder rect
+   * stroke/.lg-* legend glyphs), i.e. WCAG 1.4.11 non-text graphical
+   * objects needing >=3:1 on --surface-editor, not just >=20 dE from each
+   * other -- the originals measured 1.47-1.88, nowhere close. --graph-tag
+   * re-picked to purple (was a second beige); folder/link/backlink
+   * monotonically darkened (hue preserved, no redesign) until each cleared
+   * 3:1. All four now >=3.10:1 on the editor surface; minimum pairwise dE
+   * 24.3 (folder vs backlink), still clear of the 20 threshold. */
+  --graph-folder:        #a19063;
+  --graph-folder-fill:   #f5ecd6;
+  --graph-tag:           #ad7fce;
+  --graph-tag-fill:      #eddcf6;
+  --graph-link:          #7495b2;
+  --graph-link-fill:     #eaf2f9;
+  --graph-backlink:      #739b7b;
+  --graph-backlink-fill: #eaf5ed;
+
+  /* ---- Elevation ------------------------------------------------------- *
+   * Nine distinct shadow recipes existed for four jobs. Collapsed to five.
+   * Bundled as whole box-shadow values, not bare colours: the blur and
+   * offset have to change with the theme too -- a dark UI needs a shadow
+   * that reads as depth rather than as smudge. */
+  --shadow-raised:  0 1px 4px rgba(0, 0, 0, 0.15);   /* buttons */
+  --shadow-card:    0 2px 16px rgba(0, 0, 0, 0.11);  /* auth card, find bar */
+  --shadow-menu:    0 6px 24px rgba(0, 0, 0, 0.16);  /* menus, popovers */
+  --shadow-menu-up: 0 -6px 24px rgba(0, 0, 0, 0.16); /* bottom-anchored panel */
+  --shadow-modal:   0 12px 40px rgba(0, 0, 0, 0.25); /* dialogs */
+
+  /* ---- Scrims ---------------------------------------------------------- */
+  --scrim:          rgba(0, 0, 0, 0.35);
+  /* Warm, and heavier. Sits behind the graph modal, whose node palette is
+     warm -- a neutral scrim under it reads as a colour cast. */
+  --scrim-strong:   rgba(20, 16, 8, 0.45);
+
+  /* ---- Type ------------------------------------------------------------ *
+   * IBM Plex Sans Thai + IBM Plex Mono: one superfamily, matching metrics,
+   * so Thai, Latin and monospace sit on the same baseline with no per-script
+   * tuning. The previous stack named Segoe UI, which has no Thai coverage at
+   * all -- on Windows, Jodd's primary target, Thai fell through to whatever
+   * the system picked. The display role is this same sans at 600/700, not a
+   * third family. */
+  --font-sans: 'IBM Plex Sans Thai', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* 15 sizes collapsed to 7. The old 8/9/10px steps were below comfortable
+     reading -- especially for Thai, whose vowel marks lose legibility faster
+     than Latin descenders -- so they merge upward into 11px rather than
+     surviving. */
+  --size-xs:  11px;
+  --size-sm:  12px;
+  --size:     13px;
+  --size-md:  14px;
+  --size-lg:  16px;
+  --size-xl:  22px;
+  --size-2xl: 28px;
+
+  /* Thai stacks vowels above the base glyph and tone marks above those. At
+     line-height 1 the marks clip. 1.5 is the floor anywhere user text can
+     appear; 1.7 for sustained reading in the editor body. */
+  --leading-tight: 1.35;  /* chrome only -- never user text */
+  --leading:       1.5;
+  --leading-body:  1.7;
+
+  /* ---- Radii + motion --------------------------------------------------- */
+  --radius-sm: 4px;
+  --radius:    6px;
+  --radius-lg: 10px;
+  --ease:      0.15s;
+}
+
+/* ---- Dark theme -------------------------------------------------------- *
+ * Two blocks with identical bodies. The media query follows the OS; the
+ * attribute override wins over it in both directions, so an explicit
+ * "Light" choice survives a dark OS. Keep them in sync -- tokens.test.ts
+ * asserts they are equal, because "Dark" and "System (dark)" rendering
+ * differently is the kind of bug nobody reports and everybody notices.
+ *
+ * Four families did NOT invert and were re-picked by measurement:
+ *   1. --accent-tint / --accent-on-tint. A pale amber chip has no dark
+ *      counterpart by inversion; this is a desaturated amber at low
+ *      luminance with a light foreground.
+ *   2. The graph categorical palette. Those four encode relation types and
+ *      the view exists to keep them apart -- lightening by formula converges
+ *      folder and tag. Re-picked for separation, not for hue-match.
+ *   3. --surface-badge. Opaque in dark for the same reason Tier 1 made it
+ *      opaque in light: an alpha badge composites with a row whose
+ *      background changes on hover and silently loses contrast.
+ *   4. The overlays. Black-at-8% is invisible on a dark surface, so the dark
+ *      set is white-based -- but NOT uniformly lower-alpha: light-on-dark
+ *      reads stronger than dark-on-light at equal alpha, so each state was
+ *      re-measured rather than carried over by formula. --surface-sunken
+ *      came down (0.04 -> 0.03), --surface-hover held (0.06 both),
+ *      --surface-active went UP (0.10 -> 0.11) to stay legible as a
+ *      selection cue against the darker base surfaces.
+ */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-editor:   #17161a;
+    --surface-list:     #1c1b20;
+    --surface-sidebar:  #232227;
+    --surface-panel:    #26252b;
+    --surface-badge:    #302f36;
+
+    --surface-sunken:   rgba(255, 255, 255, 0.03);
+    --surface-hover:    rgba(255, 255, 255, 0.06);
+    --surface-active:   rgba(255, 255, 255, 0.11);
+
+    --border-subtle:    #322f38;
+    --border:           #403c47;
+    --border-strong:    #524d5b;
+
+    --text:             #ececf0;
+    --text-secondary:   #b9b6c0;
+    --text-muted:       #aca8b4;   /* CORRECTED TWICE by measurement. #94909c was
+                                      4.24:1 on --surface-badge (FAIL). #a09ca8 fixed
+                                      that but was 4.01:1 on --surface-panel UNDER
+                                      --surface-active (FAIL). This clears both:
+                                      4.62 worst-overlayed, 5.69 on badge. */
+    --text-inverse:     #17161a;
+    --text-disabled:    #6a6672;
+
+    --accent:           #d99a45;
+    --accent-action:    #e8b571;
+    --accent-hover:     #f0c78d;
+    --accent-tint:      #3d2f18;
+    --accent-on-tint:   #f2dcb8;
+    --accent-wash:        rgba(217, 154, 69, 0.14);
+    --accent-wash-strong: rgba(217, 154, 69, 0.24);
+    --accent-rail:        rgba(217, 154, 69, 0.70);
+    --accent-border:      rgba(217, 154, 69, 0.32);
+
+    --focus:            #7fb2e8;
+    --ring-focus:       0 0 0 2px rgba(127, 178, 232, 0.40);
+
+    --danger:           #f38d80;   /* CORRECTED: #f08a7d was 4.43:1 on
+                                      panel+active. This is 4.58. */
+    --danger-wash:      rgba(240, 138, 125, 0.12);
+    --success:          #6cc586;
+    --success-wash:     rgba(108, 197, 134, 0.12);
+    --warn-wash:        rgba(217, 154, 69, 0.14);
+
+    --icon-danger: var(--danger);
+    --icon-pin:    var(--accent-action);
+    --icon-tag:    #b98fd6;   /* 4.08:1 worst-overlaid; dark can carry the graph hue */
+
+    --graph-folder:        #d9a95c;
+    --graph-folder-fill:   #3a2f18;
+    --graph-tag:           #b98fd6;
+    --graph-tag-fill:      #332a3d;
+    --graph-link:          #6ea8d8;
+    --graph-link-fill:     #1f2c38;
+    --graph-backlink:      #6cc08a;
+    --graph-backlink-fill: #1e3025;
+
+    --shadow-raised:  0 1px 4px rgba(0, 0, 0, 0.45);
+    --shadow-card:    0 2px 16px rgba(0, 0, 0, 0.50);
+    --shadow-menu:    0 6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-menu-up: 0 -6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-modal:   0 12px 40px rgba(0, 0, 0, 0.70);
+    --scrim:          rgba(0, 0, 0, 0.62);
+    --scrim-strong:   rgba(8, 6, 4, 0.74);
+  }
+}
+
+/* Manual override. Wins over the media query in BOTH directions: an explicit
+   Light choice must survive a dark OS, so the light block is restated too.
+   Both blocks are generated in the next step -- do not hand-edit one of the
+   three copies without regenerating, or Dark and System(dark) diverge. */
+
+/* BEGIN generated data-theme blocks -- do not hand-edit */
+
+:root[data-theme='dark'] {
+    --surface-editor:   #17161a;
+    --surface-list:     #1c1b20;
+    --surface-sidebar:  #232227;
+    --surface-panel:    #26252b;
+    --surface-badge:    #302f36;
+
+    --surface-sunken:   rgba(255, 255, 255, 0.03);
+    --surface-hover:    rgba(255, 255, 255, 0.06);
+    --surface-active:   rgba(255, 255, 255, 0.11);
+
+    --border-subtle:    #322f38;
+    --border:           #403c47;
+    --border-strong:    #524d5b;
+
+    --text:             #ececf0;
+    --text-secondary:   #b9b6c0;
+    --text-muted:       #aca8b4;   /* CORRECTED TWICE by measurement. #94909c was
+                                      4.24:1 on --surface-badge (FAIL). #a09ca8 fixed
+                                      that but was 4.01:1 on --surface-panel UNDER
+                                      --surface-active (FAIL). This clears both:
+                                      4.62 worst-overlayed, 5.69 on badge. */
+    --text-inverse:     #17161a;
+    --text-disabled:    #6a6672;
+
+    --accent:           #d99a45;
+    --accent-action:    #e8b571;
+    --accent-hover:     #f0c78d;
+    --accent-tint:      #3d2f18;
+    --accent-on-tint:   #f2dcb8;
+    --accent-wash:        rgba(217, 154, 69, 0.14);
+    --accent-wash-strong: rgba(217, 154, 69, 0.24);
+    --accent-rail:        rgba(217, 154, 69, 0.70);
+    --accent-border:      rgba(217, 154, 69, 0.32);
+
+    --focus:            #7fb2e8;
+    --ring-focus:       0 0 0 2px rgba(127, 178, 232, 0.40);
+
+    --danger:           #f38d80;   /* CORRECTED: #f08a7d was 4.43:1 on
+                                      panel+active. This is 4.58. */
+    --danger-wash:      rgba(240, 138, 125, 0.12);
+    --success:          #6cc586;
+    --success-wash:     rgba(108, 197, 134, 0.12);
+    --warn-wash:        rgba(217, 154, 69, 0.14);
+
+    --icon-danger: var(--danger);
+    --icon-pin:    var(--accent-action);
+    --icon-tag:    #b98fd6;   /* 4.08:1 worst-overlaid; dark can carry the graph hue */
+
+    --graph-folder:        #d9a95c;
+    --graph-folder-fill:   #3a2f18;
+    --graph-tag:           #b98fd6;
+    --graph-tag-fill:      #332a3d;
+    --graph-link:          #6ea8d8;
+    --graph-link-fill:     #1f2c38;
+    --graph-backlink:      #6cc08a;
+    --graph-backlink-fill: #1e3025;
+
+    --shadow-raised:  0 1px 4px rgba(0, 0, 0, 0.45);
+    --shadow-card:    0 2px 16px rgba(0, 0, 0, 0.50);
+    --shadow-menu:    0 6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-menu-up: 0 -6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-modal:   0 12px 40px rgba(0, 0, 0, 0.70);
+    --scrim:          rgba(0, 0, 0, 0.62);
+    --scrim-strong:   rgba(8, 6, 4, 0.74);
+  }
+
+:root[data-theme='light'] {
+  /* ---- Surfaces: warm, light to dark ---------------------------------- */
+  --surface-editor:   #fffef9;
+  --surface-list:     #faf6ed;
+  --surface-sidebar:  #f0ebe0;
+  --surface-panel:    #ffffff;   /* menus, modals, popovers */
+
+  /* Opaque badge surface. Deliberately NOT an rgba overlay: badges sit inside
+     rows whose own background changes on hover/active, so an alpha badge
+     composites with the row and silently loses contrast as the row darkens.
+     Being opaque makes the text ratio on a badge state-independent. */
+  --surface-badge:    #fffef9;
+
+  /* State overlays. Fine over a static surface; do not put small muted text
+     on top of one that is itself inside another overlay -- see --surface-badge. */
+  --surface-sunken:   rgba(0, 0, 0, 0.04);
+  --surface-hover:    rgba(0, 0, 0, 0.06);
+  --surface-active:   rgba(0, 0, 0, 0.10);
+
+  /* ---- Borders --------------------------------------------------------- */
+  --border-subtle:    #e8e2d4;
+  --border:           #ddd8cc;
+  --border-strong:    #cfcabb;
+
+  /* ---- Text: verified >=4.5:1 on all four base surfaces ---------------- */
+  --text:             #222222;   /* min 13.38:1 (on sidebar) */
+  --text-secondary:   #3d3d3d;   /* CORRECTED (Task 8 follow-up 3): #555555
+                                    left a three-level text ramp collapsed to
+                                    two -- dE(--text-muted, --text-secondary)
+                                    was only 1.68, the same colour to a
+                                    viewer, across 32 + 81 use-sites. Moving
+                                    --text-muted was already forced by the
+                                    OVERLAID audit, so the gap is reopened
+                                    from this end instead: #3d3d3d gives the
+                                    most even three-step ramp (dE(text,sec)
+                                    12.5, dE(sec,muted) 12.1, both >5), worst
+                                    overlaid contrast 7.34:1. */
+  --text-muted:       #595959;   /* CORRECTED (Task 8): the new OVERLAID audit
+                                    (state overlays composited onto a surface
+                                    before measuring) caught what a plain-surface
+                                    check couldn't -- #696969 was 4.62 on plain
+                                    sidebar but only 3.71 on sidebar+active
+                                    (FAIL). This is 4.73 worst-overlayed.
+                                    Replaces #888 #999 #aaa #b0a99a #9a978c and
+                                    the five Tier 0 near-duplicates, which were
+                                    one job done in two different temperatures. */
+  --text-inverse:     #ffffff;
+
+  /* ---- Accent ---------------------------------------------------------- *
+   * Two ambers, and collapsing them into one ships an accessibility
+   * regression that looks like a fix:
+   *     3.29:1  white on #c97c1f   <- fails AA
+   *     5.41:1  white on #9c5a12   <- passes
+   * --accent is for fills, tints and borders with NO text on them.
+   * --accent-action is for anything carrying or being text. */
+  --accent:           #c97c1f;
+  --accent-action:    #8a4800;   /* CORRECTED (Task 8): the OVERLAID audit
+                                    caught #9c5a12 at only 3.65:1 on
+                                    sidebar+active (FAIL) despite clearing
+                                    every plain surface. This is 4.72
+                                    worst-overlayed; white on it improves too
+                                    (was 5.41:1 -- darkening only helps a
+                                    reversed-text ratio). */
+  --accent-hover:     #8f5310;   /* white on it 6.15:1 */
+  --accent-tint:      #f3e4c0;   /* selected chip / pill background */
+  --accent-on-tint:   #3a2f12;   /* 10.45:1 on --accent-tint */
+  --accent-wash:        rgba(201, 124, 31, 0.10);
+  --accent-wash-strong: rgba(201, 124, 31, 0.20);
+  --accent-rail:        rgba(201, 124, 31, 0.55);
+  --accent-border:      rgba(201, 124, 31, 0.25);
+
+  /* ---- Focus: the only remaining use of blue. >=3.83:1 on every surface. */
+  --focus:            #3d78bc;
+  /* One focus ring for the whole app. Two existed: an amber one on
+     .link-prompt-input and a blue one on .prompt-input, for controls that
+     look and behave identically. */
+  --ring-focus:       0 0 0 2px rgba(61, 120, 188, 0.25);
+
+  /* Disabled control text. Exempt from WCAG 1.4.3 (disabled components are
+     explicitly out of scope), so this is deliberately below 4.5:1 -- looking
+     unavailable is the entire job. */
+  --text-disabled:    #8c8c8c;
+
+  /* ---- Status ---------------------------------------------------------- */
+  --danger:           #ac2517;   /* CORRECTED (Task 8): the OVERLAID audit
+                                    caught #c0392b at only 3.67:1 on
+                                    sidebar+active (FAIL) despite 4.57:1 on
+                                    plain sidebar. This is 4.68 worst-overlayed. */
+  --danger-wash:      rgba(192, 57, 43, 0.08);
+  --success:          #0b6823;   /* CORRECTED (Task 9 follow-up): --success was
+                                    never in the audited PAIRS set at all -- a
+                                    coverage gap, not a measured-and-passed
+                                    value. #46a35e measured only 2.65:1 on
+                                    plain sidebar (real uses: .keeper-tag text
+                                    in DupReviewModal, .account-chip-dot in
+                                    Sidebar) and as low as 2.13 sidebar+active.
+                                    This is 4.70 worst-case across
+                                    sidebar/panel plain+overlaid and the
+                                    --success-wash chip backdrop. */
+  --success-wash:     rgba(70, 163, 94, 0.10);
+  --warn-wash:        rgba(201, 124, 31, 0.12);
+
+  /* ---- Semantic icon accents ------------------------------------------ *
+   * A few icons carry meaning that colour communicates faster than shape:
+   * delete is destructive, pinned is marked, a tag is a tag. Everything else
+   * stays currentColor -- colouring every icon turns colour into noise and
+   * removes its ability to mean anything.
+   *
+   * --icon-tag is NOT --graph-tag. That one was picked for Lab dE separation
+   * against three other hues inside the graph, and measures 2.12:1 as a
+   * stroke on a selected sidebar row -- it fails WCAG 1.4.11's 3:1 for a
+   * non-text graphic. Same hue family, different job, different value. */
+  --icon-danger: var(--danger);
+  --icon-pin:    var(--accent-action);
+  --icon-tag:    #7b4ea8;   /* 4.06:1 on sidebar+active; dE 20 from --graph-tag */
+
+  /* ---- Graph view: a CATEGORICAL palette, not theme accent ------------- *
+   * The local graph encodes four relation types by colour (folder / tag /
+   * link / backlink) with a matching legend. These are deliberately NOT
+   * collapsed into --accent/--focus: they are near-duplicates of theme
+   * colours only by coincidence of hue, and merging any two of them would
+   * make two different relation types indistinguishable, which is the one
+   * thing this view exists to show.
+   *
+   * CORRECTED (Task 8 follow-up 2): the ΔE guard only ever ran against the
+   * dark palette. This light set had converged -- folder/tag were dE 5.3
+   * apart (the same swatch to a viewer) -- and nothing measured it. Also:
+   * these are SVG stroke/dot colours (NoteEditor .g-edge/.g-folder rect
+   * stroke/.lg-* legend glyphs), i.e. WCAG 1.4.11 non-text graphical
+   * objects needing >=3:1 on --surface-editor, not just >=20 dE from each
+   * other -- the originals measured 1.47-1.88, nowhere close. --graph-tag
+   * re-picked to purple (was a second beige); folder/link/backlink
+   * monotonically darkened (hue preserved, no redesign) until each cleared
+   * 3:1. All four now >=3.10:1 on the editor surface; minimum pairwise dE
+   * 24.3 (folder vs backlink), still clear of the 20 threshold. */
+  --graph-folder:        #a19063;
+  --graph-folder-fill:   #f5ecd6;
+  --graph-tag:           #ad7fce;
+  --graph-tag-fill:      #eddcf6;
+  --graph-link:          #7495b2;
+  --graph-link-fill:     #eaf2f9;
+  --graph-backlink:      #739b7b;
+  --graph-backlink-fill: #eaf5ed;
+
+  /* ---- Elevation ------------------------------------------------------- *
+   * Nine distinct shadow recipes existed for four jobs. Collapsed to five.
+   * Bundled as whole box-shadow values, not bare colours: the blur and
+   * offset have to change with the theme too -- a dark UI needs a shadow
+   * that reads as depth rather than as smudge. */
+  --shadow-raised:  0 1px 4px rgba(0, 0, 0, 0.15);   /* buttons */
+  --shadow-card:    0 2px 16px rgba(0, 0, 0, 0.11);  /* auth card, find bar */
+  --shadow-menu:    0 6px 24px rgba(0, 0, 0, 0.16);  /* menus, popovers */
+  --shadow-menu-up: 0 -6px 24px rgba(0, 0, 0, 0.16); /* bottom-anchored panel */
+  --shadow-modal:   0 12px 40px rgba(0, 0, 0, 0.25); /* dialogs */
+
+  /* ---- Scrims ---------------------------------------------------------- */
+  --scrim:          rgba(0, 0, 0, 0.35);
+  /* Warm, and heavier. Sits behind the graph modal, whose node palette is
+     warm -- a neutral scrim under it reads as a colour cast. */
+  --scrim-strong:   rgba(20, 16, 8, 0.45);
+
+  /* ---- Type ------------------------------------------------------------ *
+   * IBM Plex Sans Thai + IBM Plex Mono: one superfamily, matching metrics,
+   * so Thai, Latin and monospace sit on the same baseline with no per-script
+   * tuning. The previous stack named Segoe UI, which has no Thai coverage at
+   * all -- on Windows, Jodd's primary target, Thai fell through to whatever
+   * the system picked. The display role is this same sans at 600/700, not a
+   * third family. */
+  --font-sans: 'IBM Plex Sans Thai', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* 15 sizes collapsed to 7. The old 8/9/10px steps were below comfortable
+     reading -- especially for Thai, whose vowel marks lose legibility faster
+     than Latin descenders -- so they merge upward into 11px rather than
+     surviving. */
+  --size-xs:  11px;
+  --size-sm:  12px;
+  --size:     13px;
+  --size-md:  14px;
+  --size-lg:  16px;
+  --size-xl:  22px;
+  --size-2xl: 28px;
+
+  /* Thai stacks vowels above the base glyph and tone marks above those. At
+     line-height 1 the marks clip. 1.5 is the floor anywhere user text can
+     appear; 1.7 for sustained reading in the editor body. */
+  --leading-tight: 1.35;  /* chrome only -- never user text */
+  --leading:       1.5;
+  --leading-body:  1.7;
+
+  /* ---- Radii + motion --------------------------------------------------- */
+  --radius-sm: 4px;
+  --radius:    6px;
+  --radius-lg: 10px;
+  --ease:      0.15s;
+}
+
+/* END generated data-theme blocks */
