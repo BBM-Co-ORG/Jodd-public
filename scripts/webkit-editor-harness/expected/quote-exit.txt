@@ -1,0 +1,9 @@
+Enter (native, in bq)      | <blockquote>quoted</blockquote><blockquote><br></blockquote>   caret=BLOCKQUOTE@0
+Enter on empty → exit      | <blockquote>quoted</blockquote><div><br></div>   caret=DIV@0
+typed z                    | <blockquote>quoted</blockquote><div>z</div>   caret="z"@1
+cmd+z #1                   | <blockquote>quoted</blockquote><div><br></div>   caret=DIV@0
+cmd+z #2                   | <blockquote>quoted</blockquote><blockquote><br></blockquote>   caret=BLOCKQUOTE@0
+cmd+z #3                   | <blockquote>quoted</blockquote>   caret=BLOCKQUOTE@1
+redo #1                    | <blockquote>quoted</blockquote><blockquote><br></blockquote>   caret=BLOCKQUOTE@0
+redo #2                    | <blockquote>quoted</blockquote><div><br></div>   caret=DIV@0
+redo #3                    | <blockquote>quoted</blockquote><div>z</div>   caret="z"@1

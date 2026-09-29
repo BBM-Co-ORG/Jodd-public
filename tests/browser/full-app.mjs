@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+const {chromium} = await import(process.env.JODD_PLAYWRIGHT || 'playwright');
+const browser = await chromium.launch({channel:'chrome', headless:true});
+const page=await browser.newPage({viewport:{width:1280,height:850}});
+const errors=[]; page.on('pageerror', e=>errors.push(e.message));
+page.on('console',m=>{if(m.type()==='error') errors.push(m.text());});
+await page.route('**/*',r=>new URL(r.request().url()).hostname==='127.0.0.1'?r.continue():r.abort());
+try {
+ await page.goto('http://127.0.0.1:1420/tests/browser/full-app.html');
+ await page.getByTitle('App settings',{exact:true}).waitFor();
+ await page.waitForTimeout(1200);
+ await page.screenshot({path:'/tmp/jodd-full-app.png'});
+ await page.getByTitle('App settings',{exact:true}).click();
+ await page.getByRole('heading', {name: 'App Settings', exact: true}).waitFor();
+ await page.getByText('LLM provider', {exact:true}).waitFor();
+ await page.waitForTimeout(700);
+ await page.screenshot({path:'/tmp/jodd-full-app-settings.png'});
+ await page.goto('http://127.0.0.1:1420/tests/browser/full-app.html');
+ await page.getByTitle('Manage accounts', {exact:true}).click();
+ await page.getByTitle('Account settings', {exact:true}).first().click();
+ await page.getByRole('heading', {name:'Account settings', exact:true}).waitFor();
+ await page.waitForTimeout(700);
+ assert.equal(await page.getByText('Error: Forbidden synthetic IPC: get_account_settings', {exact:true}).count(), 0);
+ assert.equal(await page.getByPlaceholder('Notes', {exact:true}).inputValue(), 'Notes');
+ assert.equal(await page.getByPlaceholder('Notes-Meta', {exact:true}).inputValue(), 'Notes-Meta');
+ await page.screenshot({path:'/tmp/jodd-full-app-account-settings.png'});
+ console.log('ERRORS',errors);
+ assert.deepEqual(errors,[]);
+ console.log(`PASS Chrome ${browser.version()}: production App entry, Sidebar, App settings and Account settings with synthetic IPC; no native backend/AI`);
+} catch(e) { console.log('ERRORS', errors); console.log(await page.locator('body').innerText()); await page.screenshot({path:'/tmp/jodd-full-app-error.png'}); throw e; } finally {await browser.close();}

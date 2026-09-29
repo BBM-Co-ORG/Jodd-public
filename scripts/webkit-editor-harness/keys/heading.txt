@@ -1,0 +1,14 @@
+type # Title
+snap typed "# Title"
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions Jodd needs from the Tauri webview to call IPC, listen for events, and observe window focus changes.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:event:allow-unlisten",
+    "core:window:default",
+    "core:window:allow-current-monitor",
+    "core:window:allow-is-focused",
+    "core:window:allow-set-title",
+    "core:webview:default",
+    "shell:allow-open",
+    "opener:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "deep-link:default"
+  ]
+}
