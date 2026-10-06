@@ -1,0 +1,3 @@
+js window.INITIAL = '<div>base</div>'; window.CARET = ['div','end']; window.setup(); 0
+js document.execCommand('insertText', false, ' a  b\t c   '); 0
+snap insertText spaces

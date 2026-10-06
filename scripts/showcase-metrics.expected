@@ -1,0 +1,28 @@
+# Baseline for `bash scripts/showcase-metrics.sh --check`.
+#
+# `commits`, `last_commit`, and `days_span` are deliberately NOT listed here.
+# Recording any of them requires a commit, and that commit changes them —
+# there is no value you can write that stays correct after you write it.
+# Re-baselining just produces the next-off-by-one and the check can never
+# pass. The rule: a key belongs in this file only if committing this file
+# does not itself change that key's measured value. `commits`/`last_commit`/
+# `days_span` still appear in the script's *output* — they are published
+# figures, just not part of the pass/fail gate. Do not add them back.
+#
+# This baseline tracks the LIVE repository. The table published in
+# ENGINEERING-PRACTICE.md is pinned to commit `72c312f`, so the two are
+# expected to diverge as work lands — and today they do: `specs` and `plans`
+# read 25/28 here against a published 24/27, because one spec and one plan
+# were added after that commit. Neither number is wrong. A drift reported
+# here means the live repo moved; it is not a signal that the published
+# figure needs correcting. Re-pin the published table only when it is
+# deliberately re-measured against a new commit.
+version: 0.24.1
+rust_tests: 680
+vitest_tests: 198
+tests_total: 878
+specs: 25
+plans: 28
+gotchas: 13
+workflows: 3
+backends: 3
