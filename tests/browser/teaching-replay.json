@@ -1,0 +1,148 @@
+{
+  "budget": {
+    "error": "upstream error: AI workflow limit reached; available results are preserved. No additional provider attempt was sent.",
+    "receipts": [
+      {
+        "calls": [],
+        "prompt_version": "jodd-prompts-v1-93226d42c959608c0af41ee20bb0dd05eeaaf962224ce6e73459c67656769d0e",
+        "run_id": "4a16df8a-7036-4e9b-81c1-79a235a9ccd2",
+        "started_ms": 1791558926335,
+        "steps": [
+          {
+            "checks": [
+              "budget_exhausted"
+            ],
+            "id": "23ffaef0-16e5-49c1-b1d1-0b61f50ed362",
+            "kind": "action_items",
+            "latency_ms": 0,
+            "metrics": {},
+            "outcome": "failed",
+            "scope_version": null,
+            "stage": "admission"
+          }
+        ],
+        "storage_failed": false
+      }
+    ]
+  },
+  "budget_sha256": "1e7ef584b0c3187e630f59fdfc6dba2aed805d260ba835210689de98dbedbd63",
+  "corpus_sha256": "a1aa5ecd23020ff3b6542115fcb9a60e7d6f767f70c7a9ee271dc19575227f62",
+  "lessons": [
+    {
+      "body_html": "<p>Draft for review. Check each full passage before accepting a commitment. Quote matching verifies location, not meaning.</p>\n<h2>Decisions</h2>\n<ul>\n<li>มติ: ใช้ขอบเขตงานเดิม <a href=\"#meeting-2d6452cf-d562-4886-861b-ac573dc32b4e-1\">Evidence 1</a></li>\n</ul>\n<h2>Actions</h2>\n<ul>\n<li><input disabled=\"\" type=\"checkbox\"/>\nมาลีจะส่งรายการตรวจสอบภายในวันศุกร์ — Owner: มาลี; Due: วันศุกร์ <a href=\"#meeting-2d6452cf-d562-4886-861b-ac573dc32b4e-2\">Evidence 2</a></li>\n</ul>\n<h2>Unresolved / missing information</h2>\n<p>Not specified in the supplied source.</p>\n<h2>Evidence passages</h2>\n<p id=\"meeting-2d6452cf-d562-4886-861b-ac573dc32b4e-1\"><strong>Passage 1</strong>: มติ&#58; ใช้ขอบเขตงานเดิม</p>\n<p id=\"meeting-2d6452cf-d562-4886-861b-ac573dc32b4e-2\"><strong>Passage 2</strong>: มาลีจะส่งรายการตรวจสอบภายในวันศุกร์</p>\n",
+      "id": "th-01",
+      "receipts": [
+        {
+          "calls": [],
+          "prompt_version": "jodd-prompts-v1-93226d42c959608c0af41ee20bb0dd05eeaaf962224ce6e73459c67656769d0e",
+          "run_id": "a31d1d8f-80c9-4d74-a568-6da889a7374d",
+          "started_ms": 1791558926299,
+          "steps": [
+            {
+              "checks": [
+                "synthetic_response_no_provider",
+                "full_passage_match_not_semantic_proof"
+              ],
+              "id": "8dfe658c-9cbe-46d2-a5d6-25bd5f8f682e",
+              "kind": "action_items",
+              "latency_ms": 0,
+              "metrics": {},
+              "outcome": "succeeded",
+              "scope_version": null,
+              "stage": "validating_citations"
+            }
+          ],
+          "storage_failed": false
+        }
+      ],
+      "source": "มติ: ใช้ขอบเขตงานเดิม\nมาลีจะส่งรายการตรวจสอบภายในวันศุกร์"
+    },
+    {
+      "body_html": "<p>Draft for review. Check each full passage before accepting a commitment. Quote matching verifies location, not meaning.</p>\n<h2>Decisions</h2>\n<p>Not specified in the supplied source.</p>\n<h2>Actions</h2>\n<ul>\n<li><input disabled=\"\" type=\"checkbox\"/>\nตกลงให้จัดทำสรุปเหตุการณ์ — Owner: Not specified; Due: Not specified <a href=\"#meeting-1664725d-21fd-4b98-9007-2a261bce43e0-1\">Evidence 1</a></li>\n</ul>\n<h2>Unresolved / missing information</h2>\n<p>Not specified in the supplied source.</p>\n<h2>Evidence passages</h2>\n<p id=\"meeting-1664725d-21fd-4b98-9007-2a261bce43e0-1\"><strong>Passage 1</strong>: ตกลงให้จัดทำสรุปเหตุการณ์</p>\n",
+      "id": "th-02",
+      "receipts": [
+        {
+          "calls": [],
+          "prompt_version": "jodd-prompts-v1-93226d42c959608c0af41ee20bb0dd05eeaaf962224ce6e73459c67656769d0e",
+          "run_id": "69d9a6e2-d7ad-4b7f-b84a-5d4c8e989b00",
+          "started_ms": 1791558926308,
+          "steps": [
+            {
+              "checks": [
+                "synthetic_response_no_provider",
+                "full_passage_match_not_semantic_proof"
+              ],
+              "id": "cf9a1d1e-17c6-4198-9ff4-b5463301f321",
+              "kind": "action_items",
+              "latency_ms": 0,
+              "metrics": {},
+              "outcome": "succeeded",
+              "scope_version": null,
+              "stage": "validating_citations"
+            }
+          ],
+          "storage_failed": false
+        }
+      ],
+      "source": "ตกลงให้จัดทำสรุปเหตุการณ์\nยังไม่ได้กำหนดผู้รับผิดชอบหรือวันส่ง"
+    },
+    {
+      "body_html": "<p>Draft for review. Check each full passage before accepting a commitment. Quote matching verifies location, not meaning.</p>\n<h2>Decisions</h2>\n<p>Not specified in the supplied source.</p>\n<h2>Actions</h2>\n<p>Not specified in the supplied source.</p>\n<h2>Unresolved / missing information</h2>\n<ul>\n<li>[TRUNCATED] ข้อมูลการประชุมไม่ครบ ยังขาดข้อสรุป <a href=\"#meeting-3fcca7f9-5f00-4b75-b854-e697d15eac0f-1\">Evidence 1</a></li>\n</ul>\n<p>Source marked incomplete; commitments withheld.</p>\n<h2>Evidence passages</h2>\n<p id=\"meeting-3fcca7f9-5f00-4b75-b854-e697d15eac0f-1\"><strong>Passage 1</strong>: &#91;TRUNCATED&#93; ข้อมูลการประชุมไม่ครบ ยังขาดข้อสรุป</p>\n",
+      "id": "th-10",
+      "receipts": [
+        {
+          "calls": [],
+          "prompt_version": "jodd-prompts-v1-93226d42c959608c0af41ee20bb0dd05eeaaf962224ce6e73459c67656769d0e",
+          "run_id": "f03b90cd-6cb5-4dd8-aaff-028e9fae01bb",
+          "started_ms": 1791558926317,
+          "steps": [
+            {
+              "checks": [
+                "synthetic_response_no_provider",
+                "full_passage_match_not_semantic_proof"
+              ],
+              "id": "da55331d-ed69-4380-9bc2-c06d3534ebfc",
+              "kind": "action_items",
+              "latency_ms": 0,
+              "metrics": {},
+              "outcome": "succeeded",
+              "scope_version": null,
+              "stage": "validating_citations"
+            }
+          ],
+          "storage_failed": false
+        }
+      ],
+      "source": "[TRUNCATED] ข้อมูลการประชุมไม่ครบ ยังขาดข้อสรุป"
+    }
+  ],
+  "meeting_contract_sha256": "cf452dbb3b4583586f5fe14ada5c3a51002fcc54faf6e3a2431109cd5f819e58",
+  "mode": "recorded host execution on synthetic inputs; browser replays; no model called",
+  "policy": {
+    "error": "provider not configured: AI data access is disabled or this account is unavailable. Review its AI data permission in Account Settings.",
+    "receipts": [
+      {
+        "calls": [],
+        "prompt_version": "jodd-prompts-v1-93226d42c959608c0af41ee20bb0dd05eeaaf962224ce6e73459c67656769d0e",
+        "run_id": "80d66789-9850-4be3-8ebf-c28c281bcf8b",
+        "started_ms": 1791558926326,
+        "steps": [
+          {
+            "checks": [
+              "permission_before_provider_construction"
+            ],
+            "id": "3c18aa1f-696e-487d-aeeb-b0d000161d7b",
+            "kind": "action_items",
+            "latency_ms": 0,
+            "metrics": {},
+            "outcome": "failed",
+            "scope_version": null,
+            "stage": "admission"
+          }
+        ],
+        "storage_failed": false
+      }
+    ]
+  },
+  "policy_sha256": "9d393f242e54305b1ae24d15f2cab68902338f7d1f2d5df1efb6690fde498cd3"
+}

@@ -1,0 +1,8 @@
+note A: deleted OLD        | <div>A1</div><div>A2</div>   caret="A2"@2
+rendered note B            | <div>B1</div><div>B2</div>   caret=DIV@1
+note B: added 1 line       | <div>B1</div><div>B2</div><div>NEW</div>   caret="NEW"@3
+cmd+z #1                   | <div>B1</div><div>B2</div>   caret=DIV@1
+cmd+z #2                   | <div>B1</div><div>B2</div>   caret=DIV@1
+cmd+z #3                   | <div>B1</div><div>B2</div>   caret=DIV@1
+typed Z                    | <div>B1</div><div>B2Z</div>   caret="B2Z"@3
+redo                       | <div>B1</div><div>B2Z</div>   caret="B2Z"@3

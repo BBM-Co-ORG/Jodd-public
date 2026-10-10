@@ -1,0 +1,6 @@
+typed 3 lines              | <div>first line</div><div>line two</div><div>line three</div><div>line four</div>   caret="line four"@9
+cmd+z #1                   | <div>first line</div><div><br></div>   caret=DIV@1
+cmd+z #2                   | <div>first line</div><div><br></div>   caret=DIV@1
+cmd+z #3                   | <div>first line</div><div><br></div>   caret=DIV@1
+redo #1                    | <div>first line</div><div>line two</div><div>line three</div><div>line four</div>   caret="line four"@9
+ctrl+cmd+z                 | <div>first line</div><div>line two</div><div>line three</div><div>line four</div>   caret="line four"@9

@@ -1,0 +1,8 @@
+Enter at bare-text start   | <div><br></div>bare text   caret="bare text"@0
+typed z                    | <div><br></div>zbare text   caret="zbare text"@1
+cmd+z #1                   | bare text   caret="bare text"@0
+cmd+z #2                   | bare text   caret="bare text"@0
+cmd+z #3                   | bare text   caret="bare text"@0
+redo #1                    | <div><br></div>zbare text   caret="zbare text"@1
+redo #2                    | <div><br></div>zbare text   caret="zbare text"@1
+redo #3                    | <div><br></div>zbare text   caret="zbare text"@1

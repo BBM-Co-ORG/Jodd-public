@@ -1,0 +1,23 @@
+# Android 15+ (and Google Play, for app updates targeting API 35+ as of
+# Nov 2025) requires native libraries whose ELF LOAD segments are aligned to
+# the 16 KB page size some newer devices use, not the historical 4 KB.
+# NDK r27d's own CMake/ndk-build path defaults to this, but a Rust/cargo build
+# invokes the NDK's clang directly as a linker and does not pick that default
+# up — confirmed empirically: without this flag, `libjodd_lib.so` built with
+# every LOAD segment at 0x1000 (4 KB) alignment, and Android's installer flags
+# it ("This app isn't 16 KB-compatible... LOAD segment not aligned") on every
+# debug install. This flag is what NDK's own build path passes; it produces a
+# LOAD-segment-alignment-only change, not a behavior change, so it's safe to
+# apply to every Android target unconditionally (desktop targets are
+# unaffected — this file only matches on Android target triples).
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.i686-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

@@ -1,0 +1,25 @@
+Jodd
+Copyright 2026 BBM Co., Ltd. and Jodd contributors.
+
+This product includes software developed by BBM Co., Ltd.
+Licensed under the Apache License, Version 2.0 (the "License");
+see the LICENSE file for details.
+
+────────────────────────────────────────────────────────────────────
+
+This product is not affiliated with, endorsed by, or sponsored by
+Apple Inc., Google LLC, or Microsoft Corporation.
+
+"Apple" and "Apple Notes" are trademarks of Apple Inc.
+"Gmail" and "Google" are trademarks of Google LLC.
+"Outlook" and "Microsoft" are trademarks of Microsoft Corporation.
+
+All trademarks are the property of their respective owners and are
+used here for the sole purpose of describing interoperability.
+
+────────────────────────────────────────────────────────────────────
+
+Third-party components included in binary distributions are listed
+with their respective licenses in the about screen and in
+THIRD-PARTY-NOTICES.md (generated at build time from Cargo.toml and
+package.json).

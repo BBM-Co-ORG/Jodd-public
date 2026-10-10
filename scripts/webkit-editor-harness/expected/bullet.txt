@@ -1,0 +1,7 @@
+typed "- item"             | <div>first line</div><div><ul><li>item</li></ul></div>   caret="item"@4
+cmd+z #1                   | <div>first line</div><div>-&nbsp;</div>   caret="- "@2
+cmd+z #2                   | <div>first line</div><div><br></div>   caret=DIV@1
+cmd+z #3                   | <div>first line</div><div><br></div>   caret=DIV@1
+redo #1                    | <div>first line</div><div>-&nbsp;</div>   caret="- "@2
+redo #2                    | <div>first line</div><div><ul><li>item</li></ul></div>   caret="item"@4
+redo #3                    | <div>first line</div><div><ul><li>item</li></ul></div>   caret="item"@4
