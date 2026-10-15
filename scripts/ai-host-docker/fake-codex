@@ -1,0 +1,26 @@
+#!/bin/sh
+# Same shape as the FAKE_CODEX in src-tauri/src/llm/remote/wrapper.rs tests:
+# honours --output-last-message / --output-schema, copies stdin byte for byte
+# into the answer file. A prompt of exactly `sleep` hangs for the cancel tests;
+# the pid it records is that of the `sleep` it is waiting on, so "alive" means
+# the CLI's work outlived the cancel. Every start appends a line to
+# /tmp/fake.starts, so a test can prove the CLI never started.
+echo started >> /tmp/fake.starts
+out=; schema=; prev=
+for a in "$@"; do
+  [ "$prev" = --output-last-message ] && out=$a
+  [ "$prev" = --output-schema ] && schema=$a
+  prev=$a
+done
+cat > "$out"
+# `stubborn` is `sleep` with TERM ignored (inherited by the `sleep`), like a
+# CLI that does not exit on TERM: only a KILL ends it.
+p=$(cat "$out")
+[ "$p" = stubborn ] && trap '' TERM
+if [ "$p" = sleep ] || [ "$p" = stubborn ]; then
+  sleep 60 &
+  echo $! > /tmp/fake.pid
+  wait $!
+fi
+echo "codex stderr line" >&2
+exit 0

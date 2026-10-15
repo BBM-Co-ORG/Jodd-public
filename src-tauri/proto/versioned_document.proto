@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package versioned_document;
+
+message Document {
+  optional uint32 serializationVersion = 1;
+  repeated versioned_document.Version version = 2;
+}
+
+message Version {
+  optional uint32 serializationVersion = 1;
+  optional uint32 minimumSupportedVersion = 2;
+  optional bytes data = 3;
+}
