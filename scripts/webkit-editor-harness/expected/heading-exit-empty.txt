@@ -1,0 +1,8 @@
+Enter on empty h2          | <div>above</div><div><br></div>   caret=DIV@0
+typed z                    | <div>above</div><div>z</div>   caret="z"@1
+cmd+z #1                   | <div>above</div><div><br></div>   caret=DIV@0
+cmd+z #2                   | <div>above</div><h2><br></h2>   caret=H2@1
+cmd+z #3                   | <div>above</div><h2><br></h2>   caret=H2@1
+redo #1                    | <div>above</div><div><br></div>   caret=DIV@0
+redo #2                    | <div>above</div><div>z</div>   caret="z"@1
+redo #3                    | <div>above</div><div>z</div>   caret="z"@1

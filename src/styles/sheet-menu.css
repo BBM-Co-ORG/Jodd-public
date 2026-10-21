@@ -1,0 +1,73 @@
+/* ─── Phone bottom-sheet menu rows ─────────────────────────────────────
+   One stylesheet for every `.sheet-menu` inside a phone sheet
+   (Modal phone="sheet"): the note menu (NoteContextMenu), the Sidebar's
+   folder menu, the AI ✦ sheet and the Tags pane's tag menu. Rows are touch
+   targets. Tokens only.
+
+   Scoped under the sheet's <dialog> on purpose: that outranks a component's
+   own scoped `.item` rule for its anchored desktop menu (the same element
+   class), while a component's scoped `.sheet-menu …` override for one of its
+   own row kinds still outranks this. */
+dialog[data-presentation='sheet'] .sheet-menu {
+  display: flex;
+  flex-direction: column;
+}
+dialog[data-presentation='sheet'] .sheet-menu .item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* Only rows that act highlight. Heading rows (`.header`, NoteContextMenu's
+   Move-to `.account-row`) are excluded HERE rather than reset by their
+   component: a component's scoped reset is one type selector short of this
+   rule's specificity and loses to it. */
+dialog[data-presentation='sheet'] .sheet-menu .item:hover:not(:disabled):not(.header):not(.account-row) {
+  background: var(--surface-hover);
+}
+dialog[data-presentation='sheet'] .sheet-menu .item:disabled {
+  cursor: default;
+}
+dialog[data-presentation='sheet'] .sheet-menu .item.danger {
+  color: var(--danger);
+}
+/* A non-interactive explanation row ("Tag changes aren't available yet"). */
+dialog[data-presentation='sheet'] .sheet-menu .item.header {
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+  cursor: default;
+}
+dialog[data-presentation='sheet'] .sheet-menu .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: var(--space-4);
+}
+dialog[data-presentation='sheet'] .sheet-menu .label {
+  flex: 1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+dialog[data-presentation='sheet'] .sheet-menu .chevron {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-disabled);
+}
+dialog[data-presentation='sheet'] .sheet-menu .sep {
+  height: 1px;
+  background: var(--surface-active);
+  margin: var(--space-1) var(--space-2);
+}

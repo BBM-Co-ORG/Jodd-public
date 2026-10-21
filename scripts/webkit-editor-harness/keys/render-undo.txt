@@ -1,0 +1,21 @@
+js window.INITIAL = '<div>A1</div><div>A2</div><div>OLD</div>'; window.CARET = ['div:last-child','end']; window.setup(); 0
+key backspace
+key backspace
+key backspace
+key backspace
+snap note A: deleted OLD
+js window.render('<div>B1</div><div>B2</div>'); 0
+snap rendered note B
+key enter
+type NEW
+snap note B: added 1 line
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+type Z
+snap typed Z
+key shift+cmd+z
+snap redo
