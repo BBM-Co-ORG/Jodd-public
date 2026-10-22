@@ -1,0 +1,8 @@
+Backspace merge-empty      | <div>above</div><h2>Heading</h2>   caret=H2@0
+typed z                    | <div>above</div><h2>zHeading</h2>   caret="zHeading"@1
+cmd+z #1                   | <div>above</div><h2>Heading</h2>   caret=H2@0
+cmd+z #2                   | <div>above</div><div><br></div><h2>Heading</h2>   caret=DIV@1
+cmd+z #3                   | <div>above</div><div><br></div><h2>Heading</h2>   caret=DIV@1
+redo #1                    | <div>above</div><h2>Heading</h2>   caret="above"@5
+redo #2                    | <div>above</div><h2>zHeading</h2>   caret="zHeading"@1
+redo #3                    | <div>above</div><h2>zHeading</h2>   caret="zHeading"@1

@@ -1,0 +1,82 @@
+name: AI host kit
+on:
+  pull_request:
+    paths: ['ai-host/**', 'scripts/ai-host-e2e/**', '.github/workflows/ai-host.yml']
+  # No paths filter on push: a snapshot synced to Jodd-public is a new commit
+  # with no parent, and GitHub then matches no paths, so the publish would
+  # never start. In the private repo this costs an amd64 build per main push.
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * 1'        # weekly: pick up Debian security updates
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-host-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: >
+          shellcheck -s sh
+          ai-host/bin/jodd-ai-host
+          ai-host/lib/*.sh
+          ai-host/install/*.sh
+          ai-host/docker/entrypoint.sh
+          ai-host/test/*.sh
+          scripts/ai-host-e2e/*.sh
+      - name: helper tests
+        run: sh ai-host/test/helper_test.sh
+      - name: macOS installer tests
+        run: sh ai-host/test/macos_test.sh
+      # The e2e drivers in scripts/ai-host-e2e/ are local-only (they download
+      # the real CLIs); they are linted above but never run here.
+
+  image:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Publish only from main of Jodd-public. This file reaches it through the
+      # snapshot sync, so the public image is built from exactly the source the
+      # public guides and installer URLs describe, and only when a sync (or the
+      # weekly schedule there) runs it. Two gates, one condition:
+      #  - repository: in the private repo, where development happens, every
+      #    main push would otherwise put unreleased code in front of users.
+      #  - ref: workflow_dispatch can run from any branch, and a branch build
+      #    must never overwrite the shared latest/date tags.
+      # Everywhere else the image is build-only (amd64), like a PR.
+      # The package must grant Jodd-public Write under "Manage Actions access".
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'BBM-Co-ORG/Jodd-public' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: date
+        run: echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7
+        with:
+          context: ai-host
+          file: ai-host/docker/Dockerfile
+          platforms: ${{ env.PUBLISH == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ env.PUBLISH == 'true' }}
+          provenance: false
+          pull: true
+          tags: |
+            ghcr.io/bbm-co-org/jodd-ai-host:latest
+            ghcr.io/bbm-co-org/jodd-ai-host:${{ steps.date.outputs.d }}
