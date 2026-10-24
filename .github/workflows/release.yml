@@ -1,0 +1,598 @@
+# Release pipeline for Jodd.
+#
+# Trigger options:
+#   - Tag push (`git tag v0.2.0 && git push origin v0.2.0`) → real GitHub release
+#   - Manual dispatch from the Actions tab → draft release for testing
+#
+# Matrix targets:
+#   - macos-latest (Apple Silicon)  → .dmg / .app
+#   - macos-13     (Intel)          → .dmg / .app
+#   - windows-latest                → .msi / .exe
+#   - build-android (ubuntu-latest) → .apk, arm64-v8a only (still named
+#     "android-universal" — Gradle's flavor name, and the download docs
+#     on the homepage and Jodd-public link that file name)
+#   - jodd-mcp server binary, aarch64 macOS + x64 Windows only — built in
+#     the desktop `build` job after the bundle, reusing its compiled
+#     dependencies (see the "Build jodd-mcp" step)
+#
+# Every build job starts at t=0. Only uploads need the draft release, which
+# the desktop matrix's tauri-action creates, so Android hands its APK to the
+# small `upload-android` job instead of waiting for the whole desktop matrix.
+#
+# Cache-only runs (the twice-weekly schedule, or a manual dispatch with
+# `cache_only` ticked — run it on main) compile Windows and Android and save
+# their Rust caches on main, and publish nothing. Why that matters: a tag
+# run can restore a cache saved on main but never one saved by another tag,
+# so without them every release compiled from scratch (Windows 25 min of
+# cargo cold vs 7 warm, measured 2026-10-15/18). Release runs themselves
+# don't save, which also spares Windows a ~2.5 min cache upload.
+#
+# Gates: android-encryption (called from android-encryption.yml) must pass
+# before `finalize` publishes anything to the public download repo.
+#
+# Secrets required (Repo → Settings → Secrets and variables → Actions):
+#   GOOGLE_CLIENT_ID      (required — embedded into binary at compile time;
+#                          the build job's first step fails if it is empty)
+#   GOOGLE_CLIENT_SECRET  (required — same)
+#   GOOGLE_CLIENT_ID_ANDROID      (required for the Android job — a
+#                                  DIFFERENT, Web-application-type OAuth
+#                                  client; see .env.example and
+#                                  docs/android/APP-LINKS-SETUP.md for why)
+#   GOOGLE_CLIENT_SECRET_ANDROID  (required for the Android job — same)
+#   MS_CLIENT_ID          (required for Microsoft sign-in in shipped desktop
+#                          builds — a public client, so there is no matching
+#                          secret. NOT passed to the Android job, which refuses
+#                          Microsoft sign-in; see that job for why. Checked by
+#                          the build job's first step, like the Google pair.)
+#   ANDROID_KEYSTORE_BASE64    (required for the Android job — base64 of the
+#                               release keystore; without it the Android job
+#                               fails outright rather than silently shipping
+#                               an unsigned/differently-keyed APK, since a
+#                               release signed with the wrong key breaks
+#                               Android App Links OAuth for every existing
+#                               install — see CLAUDE.md gotcha #8)
+#   ANDROID_KEYSTORE_PASSWORD  (required for the Android job — keystore password)
+#   ANDROID_KEY_ALIAS          (required for the Android job — key alias inside it)
+#   ANDROID_KEY_PASSWORD       (required for the Android job — that key's password)
+#
+# Optional secrets (for code signing — without them users see Gatekeeper /
+# SmartScreen warnings but the binary still runs):
+#   APPLE_CERTIFICATE             (base64 of the .p12 Developer ID cert)
+#   APPLE_CERTIFICATE_PASSWORD    (password for the .p12)
+#   APPLE_SIGNING_IDENTITY        ("Developer ID Application: Name (TEAMID)")
+#   APPLE_ID                      (Apple ID for notarization)
+#   APPLE_PASSWORD                (app-specific password for notarization)
+#   APPLE_TEAM_ID                 (Team ID)
+#   WINDOWS_CERTIFICATE           (base64 of the .pfx Windows code-signing cert)
+#   WINDOWS_CERTIFICATE_PASSWORD  (password for the .pfx)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      cache_only:
+        description: 'Only compile and save Rust caches (run on main) — no release'
+        type: boolean
+        default: false
+  schedule:
+    # Mon + Thu. GitHub evicts a cache nobody has touched for 7 days, so a
+    # weekly run would sit exactly on that edge.
+    - cron: '41 2 * * 1,4'
+
+# Step-level `if:` reads this; job-level `if:` and `strategy` cannot read
+# `env`, so those spell the same expression out.
+env:
+  CACHE_ONLY: ${{ github.event_name == 'schedule' || inputs.cache_only == true }}
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS Intel (macos-13, x86_64-apple-darwin) temporarily dropped to
+        # save Actions minutes (macOS bills 10×). Re-add when cutting a real
+        # Intel-Mac release.
+        #
+        # `mcp_triple` names the jodd-mcp archive and `out_dir` is where cargo
+        # puts it: the Windows desktop build passes no --target, so its output
+        # is target/release, not target/<triple>/release.
+        #
+        # Cache-only runs skip macOS: it compiles cold in ~5 min anyway, and
+        # macOS bills 10×.
+        include: ${{ fromJSON((github.event_name == 'schedule' || inputs.cache_only == true) && '[{"platform":"windows-latest","args":"","mcp_triple":"x86_64-pc-windows-msvc","out_dir":"target/release","archive_ext":"zip"}]' || '[{"platform":"macos-latest","args":"--target aarch64-apple-darwin","mcp_triple":"aarch64-apple-darwin","out_dir":"target/aarch64-apple-darwin/release","archive_ext":"tar.gz"},{"platform":"windows-latest","args":"","mcp_triple":"x86_64-pc-windows-msvc","out_dir":"target/release","archive_ext":"zip"}]') }}
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # An unset secret expands to "" without complaint, and build.rs embeds
+      # these through `option_env!`, so a missing one still compiles: the
+      # binary simply ships unable to sign in to that provider. Every release
+      # from 2026-08-17 through v0.33.0 shipped exactly that way for Microsoft —
+      # the MS_CLIENT_ID secret was never created — and it was found by a user,
+      # not by CI. Same stance as ANDROID_KEYSTORE_BASE64 in build-android:
+      # refuse rather than ship quietly. First step, so it fails before minutes
+      # are spent on toolchains. jodd-mcp is built in this same job, so this
+      # covers it too.
+      # Not in build-android, which deliberately never receives MS_CLIENT_ID.
+      - name: Require OAuth client secrets
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET MS_CLIENT_ID; do
+            if [ -z "${!var//[[:space:]]/}" ]; then missing+=("$var"); fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing repo secret(s): ${missing[*]}"
+            echo "build.rs embeds these at compile time; without them the binary"
+            echo "builds fine and then cannot start a sign-in for that provider."
+            echo "Add them under Settings → Secrets and variables → Actions on"
+            echo "$GITHUB_REPOSITORY, then re-run this workflow."
+            exit 1
+          fi
+          echo "OK: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and MS_CLIENT_ID are set."
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS runners need the cross-arch target explicitly.
+          targets: "${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}"
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          # Save only on main (the cache-only runs) — see the header.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # Cache-only runs compile exactly what tauri-action would (it runs this
+      # same `tauri build` with the same args), minus the bundle and the
+      # release. Same embedded-secret env, so build.rs fingerprints match.
+      - name: Compile only (cache warm-up)
+        if: env.CACHE_ONLY == 'true'
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+        run: npx tauri build --no-bundle ${{ matrix.args }}
+
+      - name: Build & bundle (Tauri)
+        if: env.CACHE_ONLY != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Auto-provided by GitHub Actions; scope follows `permissions:`
+          # at the job level (contents: write — enough to create a release).
+          # tauri-action reads this env var to attach build artifacts to
+          # the draft release; without it the action errors before bundling.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Embedded into the binary at compile time via src-tauri/build.rs.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          # Microsoft is a public client — one id, no secret to pair with it.
+          # Without this the desktop build ships unable to start a Microsoft
+          # sign-in at all; see src-tauri/build.rs for why embedding it is the
+          # right call even though corporate M365 consent stays admin-gated.
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          # macOS / Windows code signing intentionally left UNSET while we
+          # don't have certs. tauri-action checks "is env defined" not "is it
+          # non-empty", so passing empty `${{ secrets.APPLE_CERTIFICATE }}`
+          # values triggers the signing path with an empty cert → security
+          # import fails. When you get an Apple Developer cert / Windows
+          # cert, add the secrets in repo settings AND uncomment the env
+          # block below — tauri-action will pick them up automatically.
+          #
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # Empty tagName + releaseId means "use the pushed tag" when triggered
+          # by a `v*` tag, or create a draft release on manual dispatch.
+          tagName: "${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseName: "Jodd ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}"
+          releaseBody: |
+            Release notes are set automatically from CHANGELOG.md by the finalize job.
+
+            **Install notes:**
+            - macOS: open with right-click → Open (first run only — Gatekeeper)
+            - Windows: SmartScreen may warn — click "More info" → "Run anyway"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # Sanity check: Jodd.app/Contents/MacOS/ must contain exactly ONE binary
+      # (the main `jodd` executable). On macOS Tahoe (26.x), launchd refuses
+      # to spawn ad-hoc signed bundles with multiple binaries in MACOS/ — the
+      # process hangs at _dyld_start (RSS=32K) with no useful error. This
+      # used to happen silently when a dev binary in src-tauri/src/bin/ was
+      # accidentally pulled into the bundle by Tauri's bundler. The gate in
+      # Cargo.toml ([[bin]] required-features=["debug-bins"]) should prevent
+      # it; this step is the belt-and-braces in case someone removes the
+      # gate or adds a new binary without one.
+      - name: Verify macOS bundle layout
+        if: runner.os == 'macOS' && env.CACHE_ONLY != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          MACOS_DIR=target/${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin/' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin/' || '' }}release/bundle/macos/Jodd.app/Contents/MacOS
+          if [ ! -d "$MACOS_DIR" ]; then
+            echo "ERROR: $MACOS_DIR does not exist — bundling likely failed earlier."
+            exit 1
+          fi
+          count=$(ls -1 "$MACOS_DIR" | wc -l | tr -d ' ')
+          if [ "$count" -ne 1 ]; then
+            echo "ERROR: $MACOS_DIR has $count entries (expected exactly 1: jodd)."
+            ls -la "$MACOS_DIR"
+            echo ""
+            echo "Cause: an extra binary got bundled into Contents/MacOS/."
+            echo "Fix: gate it in src-tauri/Cargo.toml under [[bin]] with"
+            echo "     required-features = [\"debug-bins\"] so release builds skip it."
+            exit 1
+          fi
+          echo "OK: Contents/MacOS/ contains only the main binary."
+
+      # jodd-mcp is a plain Rust binary (MCP server), not a Tauri bundle, so
+      # tauri-action can't build it — but it depends on jodd_lib, so it needs
+      # the same OpenSSL, SQLCipher and ~450 crates the desktop build just
+      # compiled. It used to be a separate `build-mcp` job that compiled all
+      # of that again from a cold cache, into target/<triple>/ (18–36 min on
+      # Windows). Here it reuses this job's target dir: same `args`, so the
+      # same output dir. Only crates whose features differ recompile — measured
+      # on an M-series Mac 2026-10-20: 43 crates (tauri, jodd, openssl-sys,
+      # libsqlite3-sys…) in 3m47s after a 7m06s desktop build, and NOT
+      # openssl-src, the vendored C build that is ~10 min of a cold Windows run.
+      #
+      # dist/ must exist because lib.rs's generate_context!() embeds it at
+      # compile time; tauri build's beforeBuildCommand already produced it.
+      - name: Build jodd-mcp
+        shell: bash
+        env:
+          # Not required by jodd-mcp itself, but src-tauri/build.rs runs as
+          # part of the same workspace compile and reads these; passing them
+          # keeps its build.rs behavior identical to the desktop build's
+          # rather than silently depending on option_env! falling through.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+        run: cargo build --release -p jodd-mcp ${{ matrix.args }}
+
+      - name: Package + upload jodd-mcp
+        if: env.CACHE_ONLY != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}
+          TRIPLE: ${{ matrix.mcp_triple }}
+          OUT_DIR: ${{ matrix.out_dir }}
+        run: |
+          set -euo pipefail
+          BIN="${OUT_DIR}/jodd-mcp"
+          [ "${{ runner.os }}" = "Windows" ] && BIN="${BIN}.exe"
+          if [ ! -f "$BIN" ]; then
+            echo "ERROR: expected binary not found at $BIN"
+            find "$OUT_DIR" -maxdepth 1 || true
+            exit 1
+          fi
+          STAGE="jodd-mcp_${TAG}_${TRIPLE}"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/"
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            DEST="${STAGE}.zip"
+            7z a "$DEST" "$STAGE" >/dev/null
+          else
+            DEST="${STAGE}.tar.gz"
+            tar czf "$DEST" "$STAGE"
+          fi
+          gh release upload "$TAG" "$DEST" --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Separate from the desktop matrix above: Android needs a different
+  # toolchain (JDK, Android SDK/NDK) and a different bundler (the raw `tauri
+  # android build` CLI, not tauri-action — which is built around desktop
+  # bundle formats). It starts at t=0 and hands its APK to `upload-android`
+  # as a workflow artifact: the draft release it uploads INTO is created by
+  # the desktop matrix's tauri-action, so only that small job waits for
+  # `build`. It used to `needs: build` itself, which put the whole Windows
+  # build (10–31 min) in front of every Android build.
+  build-android:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Rust (stable) with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android'
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          # Save only on main (the cache-only runs) — see the header.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Android SDK
+        # Pinned to v3 deliberately, despite the "forced to run on Node 24"
+        # deprecation warning this produces. The NDK cleanup step immediately
+        # below (see its own comment) is empirically tuned to v3's specific
+        # pre-install behavior (it drops NDK 29.0.14206865 alongside our
+        # pinned 27.3.13750724). v4 may pre-install a different set, which
+        # could silently break that cleanup without a real Android build to
+        # verify against. Bump only alongside re-verifying the NDK step.
+        #
+        # `packages` overrides the default 'tools platform-tools': Google
+        # stopped serving the deprecated `tools` package on 2026-09-15, and
+        # the default then fails the step (android-actions/setup-android#537).
+        # Same fix as android-encryption.yml, which proves it on every run.
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install NDK
+        # Pinned to match the version this project has been built and
+        # verified against locally (r27d) — see
+        # docs/superpowers/HANDOFF-2026-07-31-android-bringup.md. NDK 27 was
+        # chosen deliberately over 28/29; do not "helpfully" bump this to
+        # latest without re-reading why.
+        #
+        # Setting NDK_HOME to this path is NOT enough on its own — confirmed
+        # empirically (first CI run): android-actions/setup-android@v3
+        # pre-installs a newer NDK (29.0.14206865 as of this writing), and
+        # Tauri's own build tooling ignores NDK_HOME entirely, instead always
+        # auto-picking the highest-versioned NDK it finds under
+        # $ANDROID_HOME/ndk/ ("Info Using installed NDK: ...29.0.14206865"
+        # in the build log, despite NDK_HOME correctly pointing at 27.3.x).
+        # So the pin only holds if 27.3.13750724 is the ONLY version
+        # present — remove every other one after installing it.
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;27.3.13750724"
+          find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d ! -name '27.3.13750724' -exec rm -rf {} +
+          echo "Installed NDK versions:"; ls "$ANDROID_HOME/ndk"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 is not set. A release APK signed"
+            echo "with the wrong key (or unsigned) breaks Android App Links OAuth"
+            echo "for every existing install — see CLAUDE.md gotcha #8 — so this"
+            echo "job refuses to proceed rather than shipping one quietly."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/jodd-android-release.keystore"
+
+      - name: Build (Tauri Android, release, arm64 APK)
+        # arm64-v8a only, and the APK only. Both were decided from the v0.34.0
+        # release run (2026-10-18), whose build step took 42m43s: cargo ran
+        # NINE times — the CLI's own aarch64 pass, then Gradle's APK pass over
+        # all four ABIs (~6.5 min each on a cold cache), then Gradle's AAB pass
+        # relinking all four again (~1m50s each). Nothing ever uploaded the
+        # AAB; only the APK below is published.
+        #
+        # Dropping armeabi-v7a, x86 and x86_64 means 32-bit ARM phones cannot
+        # install Jodd, and Intel/AMD Chromebooks and x86 emulators run it
+        # through ARM translation. Every device Jodd has been tested on (S23
+        # FE, Tab S7) is arm64. To bring an ABI back, add `--target <name>`
+        # here plus its rustup target and its CC/CXX/AR/RANLIB/LINKER block
+        # below — the env block is per ABI, see its comment.
+        env:
+          # ANDROID_HOME is already exported into the job environment by
+          # android-actions/setup-android; NDK_HOME is built from it here
+          # since that action doesn't export NDK_HOME itself.
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+          GOOGLE_CLIENT_ID_ANDROID: ${{ secrets.GOOGLE_CLIENT_ID_ANDROID }}
+          GOOGLE_CLIENT_SECRET_ANDROID: ${{ secrets.GOOGLE_CLIENT_SECRET_ANDROID }}
+          # MS_CLIENT_ID is deliberately NOT passed here, and this is not an
+          # oversight to tidy up: `backend_kind_for_signin` (lib.rs) refuses
+          # Microsoft sign-in on Android outright, because the flow is loopback
+          # and `auth::wait_for_callback_blocking` is cfg-ed out on Android
+          # (it binds 0.0.0.0:8080 — an unauthenticated server on a phone).
+          # Embedding a credential the code refuses to reach buys nothing.
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jodd-android-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # `tauri android build` invokes cargo for each target itself and
+          # never sets these, so openssl-src's vendored OpenSSL build (needed
+          # by SQLCipher as of 74bc7b0) falls back to plain `ranlib`/`ar` on
+          # PATH — which isn't the Android cross one, so `make install_dev`
+          # dies with "aarch64-linux-android-ranlib: not found" (measured on
+          # this job, v0.24.0's first release run). Desktop builds never hit
+          # this because the host toolchain already has a working ranlib/ar.
+          # Same fix as the manual cross-compile step in the
+          # android-encryption-roundtrip job (now its own workflow,
+          # .github/workflows/android-encryption.yml), for the aarch64 target
+          # and pointed at API 24 (this app's minSdk —
+          # build.gradle.kts) rather than that job's 30 (chosen there only to
+          # match the test emulator). AR/RANLIB are
+          # NDK-unversioned (one binary covers every API level); the C/C++
+          # compiler wrappers are API-versioned, hence the `24` in each.
+          TOOLCHAIN: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin
+          CC_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CXX_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
+          AR_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          RANLIB_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+        run: |
+          set -euo pipefail
+          for f in "$CC_aarch64_linux_android" "$TOOLCHAIN/llvm-ar" "$TOOLCHAIN/llvm-ranlib"; do
+            [ -x "$f" ] || { echo "ERROR: NDK tool missing: $f"; ls "$TOOLCHAIN" || true; exit 1; }
+          done
+          npx tauri android build --apk --target aarch64
+
+      - name: Locate + rename APK for the release
+        if: env.CACHE_ONLY != 'true'
+        id: apk
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}
+        run: |
+          set -euo pipefail
+          SRC="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+          if [ ! -f "$SRC" ]; then
+            echo "ERROR: expected APK not found at $SRC"
+            find src-tauri/gen/android/app/build/outputs -iname '*.apk' || true
+            exit 1
+          fi
+          DEST="Jodd_${TAG}_android-universal.apk"
+          cp "$SRC" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Hand the APK to upload-android
+        if: env.CACHE_ONLY != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 3
+
+  # Waits for the desktop matrix only because tauri-action creates the draft
+  # release there. Seconds of work, so the wait costs nothing.
+  upload-android:
+    needs: [build, build-android]
+    if: github.event_name != 'schedule' && inputs.cache_only != true
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+
+      - name: Upload APK to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-draft', github.run_number) }}
+        run: |
+          set -euo pipefail
+          APK="Jodd_${TAG}_android-universal.apk"
+          [ -f "$APK" ] || { echo "ERROR: $APK missing from the artifact"; ls -la; exit 1; }
+          gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+
+  # The at-rest encryption proof, gating the release. Defined in its own
+  # workflow (so it stays runnable standalone in ~13 min instead of only as
+  # part of a full release run) and pulled in here via `workflow_call`, so
+  # there is one definition rather than a copy that can drift.
+  #
+  # This is a REQUIRED gate: `finalize` below is what publishes to the public
+  # download repo, so a failure here means binaries still build and the
+  # private draft still exists, but nothing reaches users. v0.24.1 shipped
+  # while this job was red — it was never in `finalize`'s `needs:` — which is
+  # exactly the hole this closes.
+  android-encryption:
+    if: github.event_name != 'schedule' && inputs.cache_only != true
+    uses: ./.github/workflows/android-encryption.yml
+
+  # Runs once after all platform builds, on a real tag only. Sets the private
+  # release's notes from CHANGELOG.md, then publishes the same binaries + notes
+  # to the public download repo. Source is never pushed — releases only.
+  finalize:
+    needs: [build, upload-android, android-encryption]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # edit/read the release on THIS (private) repo
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Derive tag + version, build notes file
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Fails the job if CHANGELOG.md has no section for this version.
+          node scripts/changelog-section.mjs "$VERSION" > notes.md
+          echo "Notes for $TAG:"; cat notes.md
+
+      - name: Set release notes on the private repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      - name: Download built assets from the private release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          # Works on a draft release with the contents:write token.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          echo "Downloaded:"; ls -la assets
+
+      - name: Publish binaries + notes to Jodd-public
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PUB="BBM-Co-ORG/Jodd-public"
+          # Create the public release if it doesn't exist yet, else upload
+          # (clobbering) into the existing one. Published (not draft) so users
+          # can download immediately — add `--draft` here to gate it instead.
+          if gh release view "$TAG" --repo "$PUB" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --repo "$PUB" --clobber
+            gh release edit "$TAG" --repo "$PUB" --notes-file notes.md
+          else
+            gh release create "$TAG" assets/* \
+              --repo "$PUB" \
+              --title "Jodd $TAG" \
+              --notes-file notes.md
+          fi

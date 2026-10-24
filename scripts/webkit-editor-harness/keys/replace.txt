@@ -1,0 +1,21 @@
+js window.INITIAL = '<div>foo one foo</div><div>two <b>foo</b></div>'; window.CARET = ['div','end']; window.setup(); 0
+type x
+snap typed x
+js if (!document.getElementById('tag')) { const i = document.createElement('input'); i.id = 'tag'; document.body.appendChild(i); } document.getElementById('tag').focus(); 0
+js window.replaceCurrent('foo','BAR'); 0
+snap replaceCurrent (focus in find bar)
+js window.replaceAll('foo','Q X'); 0
+snap replaceAll
+js ed.focus(); 0
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

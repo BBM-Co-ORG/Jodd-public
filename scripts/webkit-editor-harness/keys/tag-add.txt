@@ -1,0 +1,21 @@
+js window.INITIAL = '<div>hello world</div>'; window.CARET = ['div','end']; window.setup(); 0
+type x
+snap typed x
+js if (!document.getElementById('tag')) { const i = document.createElement('input'); i.id = 'tag'; document.body.appendChild(i); } document.getElementById('tag').focus(); 0
+js window.addTag('work'); 0
+snap addTag work (focus in tag field)
+js window.addTag('home'); 0
+snap addTag home
+js ed.focus(); 0
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

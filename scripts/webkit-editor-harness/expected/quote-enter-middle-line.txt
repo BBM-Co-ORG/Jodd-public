@@ -1,0 +1,8 @@
+Enter on middle empty line | <blockquote>a<br><br><br>b</blockquote>   caret=BLOCKQUOTE@3
+typed z                    | <blockquote>a<br><br>z<br>b</blockquote>   caret="z"@1
+cmd+z #1                   | <blockquote>a<br><br>b</blockquote>   caret=BLOCKQUOTE@2
+cmd+z #2                   | <blockquote>a<br><br>b</blockquote>   caret=BLOCKQUOTE@2
+cmd+z #3                   | <blockquote>a<br><br>b</blockquote>   caret=BLOCKQUOTE@2
+redo #1                    | <blockquote>a<br><br>z<br>b</blockquote>   caret="z"@1
+redo #2                    | <blockquote>a<br><br>z<br>b</blockquote>   caret="z"@1
+redo #3                    | <blockquote>a<br><br>z<br>b</blockquote>   caret="z"@1
