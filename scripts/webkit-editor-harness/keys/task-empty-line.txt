@@ -1,0 +1,19 @@
+js window.INITIAL = '<div>first</div><div><br></div>'; window.CARET = ['div:last-child','end']; window.setup(); 0
+key shift+cmd+9
+snap formatTask on empty line
+type t
+snap typed t
+key enter
+snap Enter → next row
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

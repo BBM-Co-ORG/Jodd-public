@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- This URL carries ?code=<authorization code> in its query string whenever a
+     user reaches it. Two consequences, both handled here:
+
+     1. noindex/nofollow — a search engine must never index a URL containing an
+        auth code, nor follow anything from a page that has one in its address.
+     2. no-referrer — every external request a page makes sends the current URL
+        in the Referer header. That is why this file loads NOTHING: no fonts,
+        no analytics, no CDN. The header is the belt to that suspenders, so a
+        future edit that adds an <img src="https://..."> cannot leak the code.
+
+     The code is never displayed and never sent anywhere. It is read from the
+     address bar only to be handed straight back to the app. -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Jodd</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #fff; color: #111;
+    padding: 24px; box-sizing: border-box;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #f2f2f2; }
+    .hint { color: #999 !important; }
+    .btn { background: #f2f2f2 !important; color: #111 !important; }
+  }
+  main { max-width: 22rem; text-align: center; }
+  .mark { font-size: 2.5rem; line-height: 1; margin-bottom: 1rem; }
+  h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.75rem; }
+  .hint { font-size: 0.875rem; line-height: 1.6; color: #666; margin: 0.75rem 0 0; }
+  .btn {
+    display: inline-block; margin-top: 1.25rem;
+    padding: 0.85rem 2rem; border-radius: 999px;
+    background: #111; color: #fff; text-decoration: none;
+    font-size: 1rem; font-weight: 600;
+  }
+  #handoff[hidden], #plain[hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark" aria-hidden="true">📝</div>
+
+  <!-- Shown when the page was reached WITHOUT an auth code: someone opened the
+       URL directly, or the flow was abandoned. Nothing to hand off. -->
+  <div id="plain" hidden>
+    <h1>กลับไปที่แอป Jodd ได้เลย</h1>
+    <p class="hint">
+      ถ้าแอปไม่ได้เข้าสู่ระบบให้อัตโนมัติ ให้ปิดแท็บนี้แล้วลองกดเข้าสู่ระบบใหม่ในแอปอีกครั้ง
+    </p>
+  </div>
+
+  <!-- Shown when the page holds a live auth code, i.e. the browser rendered the
+       OAuth redirect instead of Android handing it to the app.
+
+       Why this exists at all: App Links are honored for navigations the USER
+       starts. Browsers deliberately do not hand off a server-side redirect that
+       happens mid-navigation — which is exactly the shape of an OAuth callback.
+       So the redirect lands here, in the browser, with the code stranded in the
+       address bar.
+
+       The button below turns that dead end into a one-tap handoff. Tapping is
+       the user gesture the browser requires, and the intent: URL names the
+       target package explicitly, so there is no ambiguity about which app
+       receives the code. -->
+  <div id="handoff" hidden>
+    <h1>เข้าสู่ระบบสำเร็จ</h1>
+    <p class="hint">แตะปุ่มด้านล่างเพื่อกลับเข้าแอป Jodd และใช้งานต่อ</p>
+    <a id="open" class="btn" href="#">เปิดแอป Jodd</a>
+    <p class="hint">
+      ถ้าปุ่มไม่ทำงาน ให้เปิดแอป Jodd เองแล้วกดเข้าสู่ระบบใหม่อีกครั้ง
+    </p>
+  </div>
+</main>
+
+<script>
+(function () {
+  var q = window.location.search;
+  var p = new URLSearchParams(q);
+
+  // Both are required. `state` is what the app checks against the value it
+  // generated, so a callback without it cannot be completed and must not be
+  // presented as if it could.
+  if (!p.get('code') || !p.get('state')) {
+    document.getElementById('plain').hidden = false;
+    return;
+  }
+
+  // intent: URL syntax — the real scheme moves into the fragment, and
+  // `package=` pins the receiver so no other installed app can claim it.
+  // The query string is passed through verbatim; re-encoding it risks
+  // corrupting a code that legitimately contains '/' or '+'.
+  var target =
+    'intent://jodd.bbmedia.co.th/oauth2redirect' + q +
+    '#Intent;scheme=https;package=co.bbmedia.jodd;end';
+
+  document.getElementById('open').href = target;
+  document.getElementById('handoff').hidden = false;
+
+  // Try without waiting for the tap. Browsers usually refuse an app launch with
+  // no user gesture, which is why the button is the real mechanism rather than
+  // a fallback — but when this does work the user never sees this page.
+  try { window.location.replace(target); } catch (e) {}
+})();
+</script>
+</body>
+</html>
