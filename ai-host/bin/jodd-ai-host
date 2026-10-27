@@ -1,0 +1,273 @@
+#!/bin/sh
+# jodd-ai-host — manage this machine as an AI host for Jodd.
+# Docs: https://github.com/BBM-Co-ORG/Jodd-public/blob/main/docs/ai-host/INSTALL.md
+set -u
+CONF=${JODD_AI_HOST_CONF:-/etc/jodd-ai-host.conf}
+[ -r "$CONF" ] || { echo "jodd-ai-host: $CONF not found. Install the AI host kit first (see the docs link at the top of this file)." >&2; exit 1; }
+# shellcheck disable=SC1090
+. "$CONF"
+# The caller's directory may be gone, or closed to the AI account: every shell started below as
+# that account would print "getcwd: cannot access parent directories". Nothing here uses it.
+cd / || exit 1
+: "${JODD_AI_USER:?}" "${JODD_AI_KIND:?}" "${JODD_AI_DROPIN:?}" "${JODD_AI_HOSTKEY:?}" "${JODD_AI_LIB:?}"
+# shellcheck disable=SC1091
+. "$JODD_AI_LIB/dropin.sh"
+U=$JODD_AI_USER
+
+die()   { echo "jodd-ai-host: $*" >&2; exit 1; }
+usage() { sed -n '/^# Commands:/,/^$/p' "$0" >&2; exit 2; }
+need_root() { [ "$(id -u)" = 0 ] || [ "${JODD_AI_ALLOW_NONROOT:-}" = 1 ] || die "run this with sudo (or as root)."; }
+
+# The account's home directory, without eval: getent, then dscl (macOS), then /etc/passwd.
+home_of() {
+  _h=$(getent passwd "$1" 2>/dev/null | cut -d: -f6)
+  if [ -z "$_h" ] && [ "$JODD_AI_KIND" = macos ]; then
+    _h=$(dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+  fi
+  if [ -z "$_h" ]; then
+    _h=$(awk -F: -v u="$1" '$1 == u { print $6 }' /etc/passwd 2>/dev/null)
+  fi
+  printf '%s\n' "$_h"
+}
+HOMEDIR=${JODD_AI_HOME:-}
+need_home() {
+  [ -n "$HOMEDIR" ] || HOMEDIR=$(home_of "$U")
+  [ -n "$HOMEDIR" ] || die "cannot find the home directory of $U."
+  AK="$HOMEDIR/.ssh/authorized_keys"
+}
+
+# The account's login shell, from the user database. Falls back to /bin/sh for a missing or
+# non-login shell (nologin, false). JODD_AI_SHELL overrides it (tests).
+shell_of() {
+  if [ -n "${JODD_AI_SHELL:-}" ]; then printf '%s\n' "$JODD_AI_SHELL"; return; fi
+  _s=$(getent passwd "$1" 2>/dev/null | cut -d: -f7)
+  if [ -z "$_s" ] && [ "$JODD_AI_KIND" = macos ]; then
+    _s=$(dscl . -read "/Users/$1" UserShell 2>/dev/null | awk '{print $2}')
+  fi
+  if [ -z "$_s" ]; then _s=$(awk -F: -v u="$1" '$1 == u { print $7 }' /etc/passwd 2>/dev/null); fi
+  case $_s in ''|*/nologin|*/false) _s=/bin/sh ;; esac
+  [ -x "$_s" ] || _s=/bin/sh
+  printf '%s\n' "$_s"
+}
+# Single-quote a string for the shell.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+# Run a command as the AI account through the account's OWN login shell, the way Jodd's Setup
+# probes for the CLIs. MODE is lc (login shell, like `$SHELL -lc`) or lic (login + interactive,
+# like `$SHELL -lic`, which also reads ~/.bashrc / ~/.zshrc).
+_as_user() {
+  _mode=$1 _cmd=$2
+  if [ "$_mode" = lic ]; then _cmd="exec \"\$SHELL\" -ic $(sq "$_cmd")"; fi
+  if [ "$(id -un)" = "$U" ]; then
+    _sh=$(shell_of "$U")
+    env HOME="${HOMEDIR:-$HOME}" SHELL="$_sh" "$_sh" -lc "$_cmd"
+  elif [ "$JODD_AI_KIND" = macos ]; then
+    # NOT `sudo -i ... sh -c "$_cmd"`: with a command, sudo -i/-s builds ONE string for the
+    # account's login shell by backslash-escaping every character except alphanumerics, `_`, `-`
+    # and `$` (sudo(8), --shell). The `$` stays live, so the login shell expands $(...) and $var
+    # before our command ever runs, and sudo's own escaping is then what the shell has to undo.
+    # Here every argument reaches the shell untouched: sudo runs `env`, which runs the account's
+    # own login shell with -lc - what Jodd's Setup does over ssh. sudo's default env_reset stays
+    # on (no -E), and PATH is set to what sshd gives a session, so the root user's PATH (Homebrew,
+    # a root-owned claude) cannot make `doctor` find a CLI that Jodd's own login would not.
+    # sudo -H sets HOME; the cwd is the caller's, which the account may not be able to enter.
+    _sh=$(shell_of "$U")
+    sudo -H -u "$U" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin "$_sh" -lc \
+      "SHELL=$(sq "$_sh"); export SHELL; cd \"\$HOME\" 2>/dev/null; $_cmd"
+  else
+    # `su -l` clears root's environment (a root ANTHROPIC_API_KEY or proxy must not reach the
+    # account's CLI); naming the shell and its own -lc makes the profile (and the PATH the CLIs
+    # need) load even under BusyBox, whose `su -l` does not start a login shell by itself.
+    _sh=$(shell_of "$U")
+    su -l "$U" -s "$_sh" -c "cd \"\$HOME\" 2>/dev/null; exec $(sq "$_sh") -lc $(sq "$_cmd")"
+  fi
+}
+as_user() { _as_user lc "$1"; }
+# Run a script as the AI account with /bin/sh (no login shell, no profile): for edits inside its home.
+run_as_account() {
+  if [ "$(id -un)" = "$U" ]; then
+    /bin/sh -c "$1"
+  elif [ "$JODD_AI_KIND" = macos ]; then
+    sudo -H -u "$U" /bin/sh -c "$1"
+  else
+    # env -i: su would pass root's environment on, and the account can read its child's
+    # (/proc/PID/environ). JODD_AI_SU is a test seam.
+    env -i PATH=/usr/bin:/bin HOME="${HOMEDIR:-/}" "${JODD_AI_SU:-su}" -s /bin/sh -c "$1" "$U"
+  fi
+}
+# sshd lives in sbin, which a non-root PATH often lacks.
+sshd_bin() {
+  for _d in "$(command -v sshd 2>/dev/null)" /usr/sbin/sshd /usr/local/sbin/sshd /sbin/sshd; do
+    [ -n "$_d" ] && [ -x "$_d" ] && { printf '%s\n' "$_d"; return 0; }
+  done
+  return 1
+}
+sshd_test() {
+  if [ -n "${JODD_AI_SSHD_TEST:-}" ]; then
+    # shellcheck disable=SC2086
+    $JODD_AI_SSHD_TEST
+  else
+    _b=$(sshd_bin) || return 1
+    "$_b" -t
+  fi
+}
+# sshd's effective settings for a login by the AI account (`sshd -T`, needs root).
+# JODD_AI_SSHD_DUMP overrides the command (tests), as JODD_AI_SSHD_TEST does for `sshd -t`.
+sshd_effective() {
+  if [ -n "${JODD_AI_SSHD_DUMP:-}" ]; then
+    # shellcheck disable=SC2086
+    $JODD_AI_SSHD_DUMP
+  else
+    _b=$(sshd_bin) || return 1
+    "$_b" -T -C "user=$U,host=localhost,addr=127.0.0.1"
+  fi
+}
+# HUP only sshd's listener. `pkill -HUP -x sshd` also hits the per-connection processes, which on
+# OpenSSH before 9.8 are still named sshd and die on SIGHUP - closing every live session, the
+# admin's own included. The listener's pid is in sshd's pidfile; failing that, the oldest sshd.
+sshd_hup_listener() {
+  _b=$(sshd_bin 2>/dev/null) || _b=
+  _pf=
+  [ -z "$_b" ] || _pf=$("$_b" -T 2>/dev/null | awk '$1 == "pidfile" { print $2; exit }')
+  [ -n "$_pf" ] || _pf=/run/sshd.pid
+  _p=$(cat "$_pf" 2>/dev/null || :)
+  case $_p in ''|*[!0-9]*) _p= ;; esac
+  if [ -n "$_p" ] && kill -0 "$_p" 2>/dev/null \
+     && { [ ! -r "/proc/$_p/comm" ] || [ "$(cat "/proc/$_p/comm" 2>/dev/null)" = sshd ]; }; then
+    kill -HUP "$_p"
+  else
+    pkill -HUP -o -x sshd
+  fi
+}
+sshd_reload() {
+  if [ -n "${JODD_AI_SSHD_RELOAD:-}" ]; then
+    # shellcheck disable=SC2086
+    $JODD_AI_SSHD_RELOAD; return
+  fi
+  case $JODD_AI_KIND in
+    docker) sshd_hup_listener ;;
+    # macOS runs sshd from launchd per connection (ssh.plist: inetdCompatibility, Wait=false), so
+    # every new connection reads sshd_config afresh and there is nothing to reload. The old
+    # `launchctl kickstart -k system/com.openssh.sshd || true` did nothing useful: the service
+    # is not running between connections (kickstart fails, and `|| true` hid it), and where
+    # instances do exist -k kills them - live sessions included.
+    macos)  return 0 ;;
+    *)      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null \
+              || rc-service sshd reload 2>/dev/null || service ssh reload 2>/dev/null \
+              || service sshd reload 2>/dev/null || sshd_hup_listener ;;
+  esac
+}
+# Write a new drop-in (to a temp file, then moved into place); keep the old one if sshd rejects it.
+write_dropin() {
+  _dir=$(dirname "$JODD_AI_DROPIN"); _prev="$JODD_AI_DROPIN.prev"
+  mkdir -p "$_dir" || die "cannot create $_dir."
+  rm -f "$_prev"   # a leftover from an earlier crash must never be restored in place of the real one
+  if [ -f "$JODD_AI_DROPIN" ]; then
+    cp -p "$JODD_AI_DROPIN" "$_prev" || die "cannot back up $JODD_AI_DROPIN; nothing was changed."
+  fi
+  _new=$(mktemp "$_dir/.jodd-dropin.XXXXXX") || die "cannot create a temp file in $_dir; nothing was changed."
+  if ! { render_dropin "$U" "$1" > "$_new" && chmod 644 "$_new" && mv "$_new" "$JODD_AI_DROPIN"; }; then
+    rm -f "$_new" "$_prev"; die "cannot write $JODD_AI_DROPIN; nothing was changed."
+  fi
+  if ! sshd_test >/dev/null 2>&1; then
+    if [ -f "$_prev" ]; then mv "$_prev" "$JODD_AI_DROPIN"; else rm -f "$JODD_AI_DROPIN"; fi
+    die "sshd rejected the new setting; nothing was changed."
+  fi
+  rm -f "$_prev"
+  sshd_reload || die "the setting was written but reloading sshd failed; restart sshd yourself."
+}
+# "ED25519 SHA256:..." for the public host key; fails (no output) if it cannot be read.
+fingerprint() {
+  _fo=$(ssh-keygen -lf "$JODD_AI_HOSTKEY" -E sha256 2>/dev/null) && [ -n "$_fo" ] || return 1
+  printf '%s\n' "$_fo" | awk '{gsub(/[()]/,"",$NF); print $NF, $2}'
+}
+# Where a CLI is found: first as `$SHELL -lc`, then `$SHELL -lic` (what Jodd's Setup does).
+# These probes (status, doctor) are not interactive, so they get </dev/null: the account's login
+# shell runs a profile the account controls, and must not get the caller's terminal - root's,
+# under sudo - as its stdin. (It does not detach the controlling terminal; `signin`, which needs
+# that terminal, is left as it is.)
+cli_path_in() { _as_user "$1" "command -v $2" </dev/null 2>/dev/null | grep '^/' | tail -n 1; }
+cli_path() {
+  _p=$(cli_path_in lc "$1")
+  [ -n "$_p" ] || _p=$(cli_path_in lic "$1")
+  printf '%s\n' "$_p"
+}
+cli_version() { as_user "$1 --version" </dev/null 2>/dev/null | head -n 1; }
+# Returns 1 if either official installer fails (the entrypoint relies on it).
+# The script is fetched first so a failed download is not hidden by the pipe.
+# shellcheck disable=SC2016  # the $ is meant for the account's shell, not this one
+install_clis() {
+  _rc=0
+  as_user "sh -c $(sq 's=$(curl -fsSL https://claude.ai/install.sh) && printf "%s\n" "$s" | bash')" \
+    || { echo "Claude Code did not install (its installer's message is above; no network?). Retry later: jodd-ai-host update-clis" >&2; _rc=1; }
+  # CODEX_NON_INTERACTIVE: on a terminal Codex's installer asks "Start Codex now?" (it reads
+  # /dev/tty, so </dev/null does not stop it) and a yes runs Codex inside this install, whose
+  # exit status then reads as a failed install.
+  as_user "sh -c $(sq 's=$(curl -fsSL https://chatgpt.com/codex/install.sh) && printf "%s\n" "$s" | CODEX_NON_INTERACTIVE=1 sh')" \
+    || { echo "Codex did not install (its installer's message is above; no network?). Retry later: jodd-ai-host update-clis" >&2; _rc=1; }
+  return $_rc
+}
+
+# Commands:
+#   status                 what Jodd will find on this host
+#   fingerprint            the host key, as Jodd's setup screen shows it
+#   signin claude|codex    sign the CLI in (interactive)
+#   password               set a new password for the AI account
+#   lock | unlock          turn password login for the AI account off | on
+#   update-clis            reinstall / update both CLIs
+#   keys | revoke <id>     list Jodd's keys | remove one
+#   doctor                 check everything Jodd needs and say what to fix
+
+cmd=${1:-}
+if [ $# -gt 0 ]; then shift; fi
+case $cmd in
+  fingerprint) fingerprint || die "cannot read the host key at $JODD_AI_HOSTKEY." ;;
+  status)
+    need_home
+    echo "account:    $U"
+    echo "port:       ${JODD_AI_PORT:-22}"
+    fp=$(fingerprint) || die "cannot read the host key at $JODD_AI_HOSTKEY."
+    echo "host key:   $fp"
+    if grep -q 'PasswordAuthentication yes' "$JODD_AI_DROPIN" 2>/dev/null; then echo "password:   on (Jodd can run Setup / Update)"; else echo "password:   off (run: sudo jodd-ai-host unlock, before Setup / Update)"; fi
+    for c in claude codex; do p=$(cli_path "$c"); if [ -n "$p" ]; then echo "$c:  $p ($(cli_version "$c"))"; else echo "$c:  not installed (run: sudo jodd-ai-host update-clis)"; fi; done
+    n=$(grep -ac ' jodd-ai-[0-9a-f]\{8\}$' "$AK" 2>/dev/null)
+    echo "jodd keys:  ${n:-0}" ;;
+  signin)
+    need_root
+    case ${1:-} in
+      claude) as_user claude ;;
+      codex)  as_user 'codex login --device-auth' ;;
+      *) usage ;;
+    esac ;;
+  password) need_root; passwd "$U" ;;
+  lock)   need_root; write_dropin yes; echo "Password login for $U is off. Before Setup or Update in Jodd: sudo jodd-ai-host unlock" ;;
+  unlock) need_root; write_dropin no;  echo "Password login for $U is on. After Setup or Update in Jodd: sudo jodd-ai-host lock" ;;
+  update-clis) need_root; install_clis ;;
+  keys) need_home; grep -a ' jodd-ai-[0-9a-f]\{8\}$' "$AK" 2>/dev/null | awk '{print $NF}' ;;
+  revoke)
+    need_root
+    case ${1:-} in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) echo "usage: jodd-ai-host revoke <8-hex-id>  (see: jodd-ai-host keys)" >&2; exit 2 ;; esac
+    need_home
+    # The whole edit runs AS THE ACCOUNT, which owns ~/.ssh: root never creates, copies, chowns or
+    # renames anything in a directory the account controls (a compromised account could swap
+    # ~/.ssh or plant the temp file as a link to a file root runs). The checks are in the same
+    # script so they cannot be raced either. Build the new file next to the old one (same
+    # filesystem, so the final mv is atomic); cp -p first so the copy keeps mode and owner.
+    # shellcheck disable=SC2016  # the $ are for the account's shell
+    _body='cd /
+d=$(dirname "$ak")
+[ -f "$ak" ] || { echo "jodd-ai-host: $ak does not exist." >&2; exit 1; }
+[ ! -L "$d" ] || { echo "jodd-ai-host: $d is a symlink; edit it by hand (ls -l $d shows where it points)." >&2; exit 1; }
+[ ! -L "$ak" ] || { echo "jodd-ai-host: $ak is a symlink; edit its target by hand (ls -l $ak shows where it points)." >&2; exit 1; }
+cnt=$(grep -ac -- " jodd-ai-$id\$" "$ak")
+if [ "${cnt:-0}" -eq 0 ]; then echo "No key jodd-ai-$id (see: jodd-ai-host keys)" >&2; exit 1; fi
+n=$(mktemp "$d/.jodd-revoke.XXXXXX") || { echo "jodd-ai-host: cannot create a temp file next to $ak; nothing was changed." >&2; exit 1; }
+if ! cp -p "$ak" "$n"; then rm -f "$n"; echo "jodd-ai-host: cannot copy $ak; nothing was changed." >&2; exit 1; fi
+grep -a -v -- " jodd-ai-$id\$" "$ak" > "$n"; s=$?
+if [ "$s" -gt 1 ]; then rm -f "$n"; echo "jodd-ai-host: could not read $ak; nothing was changed." >&2; exit 1; fi
+if ! mv "$n" "$ak"; then rm -f "$n"; echo "jodd-ai-host: could not replace $ak; nothing was changed." >&2; exit 1; fi
+echo "Removed key jodd-ai-$id."'
+    run_as_account "ak=$(sq "$AK"); id=$1; $_body" ;;
+  doctor) need_home; # shellcheck disable=SC1091
+          . "$JODD_AI_LIB/doctor.sh"; doctor ;;
+  *) usage ;;
+esac

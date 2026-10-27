@@ -1,0 +1,9 @@
+typed [[que                | <div>see[[que</div>   caret="see[[que"@8
+pickLink                   | <div>see[[quarterly-plan]]</div>   caret="see[[quarterly-plan]]"@21
+typed !                    | <div>see[[quarterly-plan]]!</div>   caret="see[[quarterly-plan]]!"@22
+cmd+z #1                   | <div>see[[que</div>   caret="see[[que"@3
+cmd+z #2                   | <div>see </div>   caret=DIV@1
+cmd+z #3                   | <div>see </div>   caret=DIV@1
+redo #1                    | <div>see[[que</div>   caret="see[[que"@8
+redo #2                    | <div>see[[quarterly-plan]]!</div>   caret="see[[quarterly-plan]]!"@22
+redo #3                    | <div>see[[quarterly-plan]]!</div>   caret="see[[quarterly-plan]]!"@22

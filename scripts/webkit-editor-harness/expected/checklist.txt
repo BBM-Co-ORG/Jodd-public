@@ -1,0 +1,7 @@
+A, Enter, B                | <div><input type="checkbox" contenteditable="false">&nbsp;taskA</div><div><input type="checkbox" contenteditable="false">&nbsp;B</div>   caret=" B"@2
+cmd+z #1                   | <div><input type="checkbox" contenteditable="false">&nbsp;taskA</div><div><input type="checkbox" contenteditable="false">&nbsp;</div>   caret=" "@1
+cmd+z #2                   | <div><input type="checkbox" contenteditable="false">&nbsp;taskA</div>   caret=DIV@2
+cmd+z #3                   | <div><input type="checkbox" contenteditable="false">&nbsp;task</div>   caret=DIV@2
+redo #1                    | <div><input type="checkbox" contenteditable="false">&nbsp;taskA</div>   caret=" taskA"@6
+redo #2                    | <div><input type="checkbox" contenteditable="false">&nbsp;taskA</div><div><input type="checkbox" contenteditable="false">&nbsp;</div>   caret=" "@1
+redo #3                    | <div><input type="checkbox" contenteditable="false">&nbsp;taskA</div><div><input type="checkbox" contenteditable="false">&nbsp;B</div>   caret=" B"@2

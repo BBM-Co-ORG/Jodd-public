@@ -1,0 +1,364 @@
+# Release pipeline for Jodd — the SIGN + PUBLISH half. Runs on BBM-Co-ORG/Jodd
+# (the private repository) only; in Jodd-public, which receives this file
+# through sync-to-public.sh like every other, its one job is skipped by `if:`.
+#
+# release.yml builds everything on Jodd-public's free runners and leaves a
+# DRAFT there plus an UNSIGNED APK as a workflow artifact. This workflow is
+# the only place the Android release keystore is used, and the only thing
+# that publishes. One Linux job, ~3 minutes:
+#
+#   1. Check where the APK came from: the run is Jodd-public's own
+#      release.yml, dispatched on main, finished green — and its Android
+#      encryption proof job is there by name and SUCCEEDED (gotcha #13: a
+#      skipped proof would still leave the run green).
+#   2. Check it built the exact released tree: the snapshot's top-level tree
+#      entries are hash-identical to the private commit's, except the paths
+#      sync-to-public.sh replaces or strips. Git tree hashes cover content,
+#      so one equal hash per entry covers every file under it.
+#   3. Sign: zipalign (16 KB pages, AGP 8.11's alignment) + apksigner with the
+#      release keystore, which is decoded to the runner's temp dir and deleted
+#      straight after.
+#   4. Check the signer is the RELEASE key named in docs/android/assetlinks.json
+#      and in the copy served from jodd.bbmedia.co.th — the one Android checks
+#      before handing the OAuth callback to the app (gotcha #8). The debug key
+#      is listed there too, so "any listed key" is not enough.
+#   5. Attach the signed APK to the draft and check it holds all seven assets.
+#   6. With `publish` (never for a vX.Y.Z-dryrun.N draft): publish it. GitHub
+#      creates the tag at the draft's commit — the snapshot — and the check
+#      after publishing confirms it did.
+#
+# Run it with scripts/release-dispatch.sh, which waits for release.yml and
+# then dispatches this with the right inputs. By hand:
+#   gh workflow run release-sign.yml --ref main \
+#     -f tag=v0.39.0 -f public_run_id=<Jodd-public run id> -f publish=true
+#
+# Secrets (repository secrets on BBM-Co-ORG/Jodd — never on Jodd-public):
+#   ANDROID_KEYSTORE_BASE64    base64 of the release keystore. Required: a
+#                              release signed with another key (or unsigned)
+#                              breaks Android App Links OAuth for every
+#                              existing install and cannot be updated over it.
+#   ANDROID_KEYSTORE_PASSWORD  keystore password
+#   ANDROID_KEY_ALIAS          key alias inside it
+#   ANDROID_KEY_PASSWORD       that key's password
+#   PUBLIC_REPO_TOKEN          fine-grained token, resource owner BBM-Co-ORG,
+#                              repository access Jodd-public ONLY, with
+#                              Contents: read and write (draft upload +
+#                              publish) and Actions: read (run, jobs and the
+#                              artifact download). It needs nothing on this
+#                              repository, and no token for this repository
+#                              ever goes to Jodd-public.
+
+name: Release sign
+
+run-name: ${{ format('Sign + {0} {1}', inputs.publish && 'publish' || 'stage', inputs.tag) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag the Jodd-public run built: vX.Y.Z, or vX.Y.Z-dryrun.N'
+        required: true
+        type: string
+      public_run_id:
+        description: 'Id of the Jodd-public "Release" run that built it'
+        required: true
+        type: string
+      publish:
+        description: 'Publish the draft once the signed APK is attached (refused for a dry-run tag)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sign-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    if: github.repository == 'BBM-Co-ORG/Jodd'
+    # Lets the keystore move from repository secrets into an environment
+    # whose deployment branches are `main` only, so a workflow on another
+    # branch cannot read it (the org's Team plan supports that on private
+    # repositories). Until it is set up, GitHub creates this environment
+    # empty on first use and the repository secrets keep working.
+    environment: android-signing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUB: BBM-Co-ORG/Jodd-public
+      TAG: ${{ inputs.tag }}
+      RUN_ID: ${{ inputs.public_run_id }}
+      PUBLISH: ${{ inputs.publish }}
+      # The release key (jodd-android.keystore, alias jodd), per
+      # docs/android/APP-LINKS-SETUP.md. 48:05:… in assetlinks.json is the
+      # DEBUG key. Pinned here as well as read from that file, so a change to
+      # the file alone cannot change what this accepts.
+      RELEASE_CERT_SHA256: 'E4:06:3D:BB:15:1B:70:CD:96:00:85:42:34:64:08:DF:D8:9B:89:46:FC:A7:35:E4:AF:7F:9A:20:63:CD:24:C2'
+      PACKAGE_NAME: co.bbmedia.jodd
+      LIVE_ASSETLINKS: https://jodd.bbmedia.co.th/.well-known/assetlinks.json
+      # 35.0.0 is the first build-tools whose zipalign has -P (page-size
+      # alignment for uncompressed .so files).
+      BUILD_TOOLS: '35.0.0'
+    steps:
+      - name: Check the inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-dryrun\.[0-9]+)?$ ]] \
+            || fail "tag must be vX.Y.Z or vX.Y.Z-dryrun.N (got '$TAG')."
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || fail "public_run_id must be a number (got '$RUN_ID')."
+          DRY=false; [[ "$TAG" == *-dryrun.* ]] && DRY=true
+          if [[ "$PUBLISH" == true && "$DRY" == true ]]; then
+            fail "$TAG is a dry-run draft; it is signed and staged, never published."
+          fi
+          VERSION="${TAG#v}"; VERSION="${VERSION%%-dryrun.*}"
+          { echo "DRY=$DRY"; echo "VERSION=$VERSION"; } >> "$GITHUB_ENV"
+
+      # Every check here runs before the keystore is touched.
+      - name: Check where the unsigned APK came from
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          PRIV_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [ -n "$GH_TOKEN" ] || fail "PUBLIC_REPO_TOKEN is not set on $GITHUB_REPOSITORY."
+          run="$(gh api "repos/$PUB/actions/runs/$RUN_ID")" \
+            || fail "Cannot read run $RUN_ID on $PUB. Does PUBLIC_REPO_TOKEN have Actions: read on it?"
+          field() { jq -r "$1" <<<"$run"; }
+
+          # The run must be Jodd-public's own release.yml on main — not a
+          # fork's run, not a branch, not another workflow — and green.
+          [ "$(field .repository.full_name)" = "$PUB" ]           || fail "run $RUN_ID is not in $PUB."
+          [ "$(field .head_repository.full_name)" = "$PUB" ]      || fail "run $RUN_ID ran code from $(field .head_repository.full_name), not $PUB."
+          [ "$(field .path)" = ".github/workflows/release.yml" ]  || fail "run $RUN_ID is $(field .path), not release.yml."
+          [ "$(field .event)" = "workflow_dispatch" ]             || fail "run $RUN_ID was a $(field .event), not a dispatch."
+          [ "$(field .head_branch)" = "main" ]                    || fail "run $RUN_ID ran on $(field .head_branch), not main."
+          [ "$(field .status)/$(field .conclusion)" = "completed/success" ] \
+            || fail "run $RUN_ID is $(field .status)/$(field .conclusion); it must have finished green."
+          if [ "$DRY" = true ]; then want_title="Release v$VERSION (dry run)"; else want_title="Release $TAG"; fi
+          [ "$(field .display_title)" = "$want_title" ] \
+            || fail "run $RUN_ID is '$(field .display_title)', expected '$want_title'."
+          HEAD_SHA="$(field .head_sha)"
+
+          # Gotcha #13. A green run is not enough: a job skipped by its `if:`
+          # counts as success, so name the proof and require that it ran.
+          jobs="$(gh api "repos/$PUB/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")"
+          echo "Jobs in run $RUN_ID:"; jq -r '.jobs[] | "  \(.conclusion)\t\(.name)"' <<<"$jobs"
+          [ "$(jq '[.jobs[] | select(.conclusion != "success")] | length' <<<"$jobs")" = 0 ] \
+            || fail "not every job in run $RUN_ID succeeded (see the list above)."
+          [ "$(jq '[.jobs[] | select(.name | endswith("Android SQLCipher round-trip proof")) | select(.conclusion == "success")] | length' <<<"$jobs")" -ge 1 ] \
+            || fail "run $RUN_ID has no successful 'Android SQLCipher round-trip proof' job — publication is gated on it (gotcha #13)."
+          [ "$(jq '[.jobs[] | select(.name | startswith("stage")) | select(.conclusion == "success")] | length' <<<"$jobs")" -ge 1 ] \
+            || fail "run $RUN_ID has no successful stage job."
+
+          # The draft this run built, still a draft, at the run's commit.
+          rel="$(gh release view "$TAG" --repo "$PUB" --json isDraft,targetCommitish)" \
+            || fail "no release $TAG on $PUB."
+          [ "$(jq -r .isDraft <<<"$rel")" = true ] || fail "$TAG on $PUB is already published."
+          [ "$(jq -r .targetCommitish <<<"$rel")" = "$HEAD_SHA" ] \
+            || fail "draft $TAG targets $(jq -r .targetCommitish <<<"$rel"), not run $RUN_ID's commit $HEAD_SHA."
+
+          # Which private commit the snapshot was made from (sync-to-public.sh
+          # writes "commit <sha>" into its message).
+          UPSTREAM="$(gh api "repos/$PUB/commits/$HEAD_SHA" --jq .commit.message | grep -oE 'commit [0-9a-f]{40}' | head -1 | cut -d' ' -f2 || true)"
+          [ -n "$UPSTREAM" ] || fail "$HEAD_SHA on $PUB is not a sync-to-public.sh snapshot."
+          if [ "$DRY" = false ]; then
+            tag_sha="$(GH_TOKEN="$PRIV_TOKEN" gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null || true)"
+            [ "$tag_sha" = "$UPSTREAM" ] \
+              || fail "the snapshot is of $UPSTREAM, but $TAG here is '${tag_sha:-missing}'. Push the tag and sync that tag."
+          else
+            # A dry run has no tag to pin it, but it is still signed with the
+            # release key — so only a commit that is already on main, never a
+            # branch nobody reviewed.
+            on_main="$(GH_TOKEN="$PRIV_TOKEN" gh api "repos/$GITHUB_REPOSITORY/compare/$UPSTREAM...main" --jq .status 2>/dev/null || true)"
+            case "$on_main" in
+              ahead|identical) ;;
+              *) fail "dry run: $UPSTREAM is not on $GITHUB_REPOSITORY main (compare status '${on_main:-unknown}'). Sync a commit from main." ;;
+            esac
+          fi
+          { echo "HEAD_SHA=$HEAD_SHA"; echo "UPSTREAM=$UPSTREAM"; } >> "$GITHUB_ENV"
+          echo "OK: run $RUN_ID built draft $TAG from snapshot $HEAD_SHA of $UPSTREAM."
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.UPSTREAM }}
+          persist-credentials: false
+
+      - name: Check the snapshot is this commit's tree
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C   # `join` needs both inputs sorted the same way
+          # Top-level paths sync-to-public.sh is allowed to make differ: its
+          # PUBLIC_DOCS (copied over the root), docs/ (internal files
+          # stripped), and the tracked files it strips. Keep in step with that
+          # script. None of them is a build input.
+          #
+          # Deliberately NOT here: .env, .env.local and the script's other
+          # untracked EXCLUDES. They are absent on both sides, so they compare
+          # equal without an exemption — and src-tauri/build.rs falls back to
+          # ../.env for any OAuth key missing from the environment, so a .env
+          # that appeared on Jodd-public's main would be compiled into the
+          # binaries this job signs. It must show up as a difference.
+          allowed=" docs README.md LICENSE NOTICE DISCLAIMER.md CONTRIBUTING.md SECURITY.md ARCHITECTURE.md ENGINEERING-PRACTICE.md CLAUDE.md AGENTS.md public-mirror-prep "
+          pub="$(gh api "repos/$PUB/git/trees/$HEAD_SHA" --jq '.tree[] | "\(.path) \(.sha)"' | sort)"
+          priv="$(git ls-tree HEAD | awk -F'\t' '{split($1, m, " "); print $2" "m[3]}' | sort)"
+          bad=0
+          while read -r entry a b; do
+            case "$allowed" in *" $entry "*) continue ;; esac
+            if [ "$a" != "$b" ]; then echo "DIFFERS: $entry (public ${a}, private ${b})"; bad=1; fi
+          done < <(join -a1 -a2 -e MISSING -o 0,1.2,2.2 <(echo "$pub") <(echo "$priv"))
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::Jodd-public $HEAD_SHA does not hold the same build inputs as $UPSTREAM."
+            exit 1
+          fi
+          echo "OK: every build input in snapshot $HEAD_SHA is identical to $UPSTREAM."
+
+      - name: Install Android build-tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'build-tools;${{ env.BUILD_TOOLS }}'
+
+      - name: Download the unsigned APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          gh run download "$RUN_ID" --repo "$PUB" --name android-apk-unsigned --dir unsigned \
+            || fail "could not download android-apk-unsigned from run $RUN_ID (it expires after 7 days)."
+          IN="unsigned/Jodd_${TAG}_android-universal-unsigned.apk"
+          [ -f "$IN" ] || { ls -la unsigned; fail "the artifact has no $(basename "$IN")."; }
+          (cd unsigned && sha256sum -c "$(basename "$IN").sha256")
+          # The APK is the version being released, for this app id.
+          # To a file, not `| head -1`: under pipefail, head closing the pipe
+          # early can kill aapt2 with SIGPIPE and fail the step at random.
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt2" dump badging "$IN" > badging.txt
+          badging="$(sed -n 1p badging.txt)"
+          echo "$badging"
+          grep -q "name='$PACKAGE_NAME'" <<<"$badging" || fail "APK package is not $PACKAGE_NAME."
+          grep -q "versionName='$VERSION'" <<<"$badging" || fail "APK versionName is not $VERSION."
+          echo "IN=$IN" >> "$GITHUB_ENV"
+
+      - name: Sign with the release key
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for var in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var is not set. A release APK signed with the wrong key (or unsigned)"
+              echo "breaks Android App Links OAuth for every existing install (gotcha #8)."
+              exit 1
+            fi
+          done
+          BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          KS="$RUNNER_TEMP/jodd-android-release.keystore"
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KS"
+          # zipalign BEFORE apksigner — signing covers the bytes, so aligning
+          # after would break the signature. -P 16 keeps uncompressed .so files
+          # on 16 KB pages, as AGP 8.11 packaged them (Android 15+ devices with
+          # 16 KB pages need it). apksigner would otherwise set its own
+          # alignment per entry, so --alignment-preserved keeps zipalign's, and
+          # the check runs on the SIGNED file — the one users install.
+          "$BT/zipalign" -P 16 -f 4 "$IN" aligned.apk
+          OUT="Jodd_${TAG}_android-universal.apk"
+          "$BT/apksigner" sign \
+            --ks "$KS" --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+            --alignment-preserved \
+            --out "$OUT" aligned.apk
+          rm -f "$KS" aligned.apk
+          "$BT/zipalign" -c -P 16 4 "$OUT"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Remove the keystore
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/jodd-android-release.keystore"
+
+      - name: Check the signer is the release key
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          "$BT/apksigner" verify --verbose --print-certs "$OUT" | tee verify.txt
+          grep -qx 'Verified using v2 scheme (APK Signature Scheme v2): true' verify.txt \
+            || fail "not verified with APK Signature Scheme v2."
+          grep -qx 'Number of signers: 1' verify.txt || fail "expected exactly one signer."
+          got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' verify.txt)"
+          want="$(tr -d ':' <<<"$RELEASE_CERT_SHA256" | tr 'A-F' 'a-f')"
+          [ "$got" = "$want" ] || fail "signed with certificate $got, not the release key $want."
+
+          fingerprints() {
+            jq -r --arg pkg "$PACKAGE_NAME" \
+              '.[] | select(.target.package_name == $pkg) | .target.sha256_cert_fingerprints[]' "$1"
+          }
+          fingerprints docs/android/assetlinks.json | grep -qx "$RELEASE_CERT_SHA256" \
+            || fail "docs/android/assetlinks.json at $UPSTREAM does not list the release key for $PACKAGE_NAME."
+          curl -fsSL --retry 3 --retry-delay 5 "$LIVE_ASSETLINKS" -o live-assetlinks.json \
+            || fail "could not fetch $LIVE_ASSETLINKS."
+          fingerprints live-assetlinks.json | grep -qx "$RELEASE_CERT_SHA256" \
+            || fail "$LIVE_ASSETLINKS does not list the release key — App Links OAuth would fail on install."
+          echo "OK: signed by the release key, which both assetlinks.json copies list."
+
+      - name: Attach the signed APK to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "$OUT" --repo "$PUB" --clobber
+          diff <(scripts/release-expected-assets.sh "$VERSION" "$TAG" --with-apk | sort) \
+               <(gh release view "$TAG" --repo "$PUB" --json assets --jq '.assets[].name' | sort) \
+            || { echo "::error::draft $TAG's assets differ from the expected seven (< expected, > actual)."; exit 1; }
+          echo "OK: draft $TAG holds the seven expected assets."
+
+      - name: Publish
+        if: inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$PUB" --draft=false --latest
+          # Publishing created the tag; it must sit on the snapshot the
+          # binaries were built from.
+          tag_sha="$(gh api "repos/$PUB/commits/$TAG" --jq .sha)"
+          if [ "$tag_sha" != "$HEAD_SHA" ]; then
+            echo "::error::$TAG on $PUB points at $tag_sha, not the built snapshot $HEAD_SHA. The release IS published — fix the tag by hand."
+            exit 1
+          fi
+          echo "Published https://github.com/$PUB/releases/tag/$TAG"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### $TAG"
+            echo "- Built by https://github.com/$PUB/actions/runs/$RUN_ID from snapshot \`${HEAD_SHA:-?}\` of \`${UPSTREAM:-?}\`"
+            if [ "${{ job.status }}" != success ]; then
+              echo "- **Stopped at a failed step.** Every step before Publish only checks, signs or"
+              echo "  uploads into the draft; if Publish itself ran, read its log to see whether the"
+              echo "  release went out."
+            elif [ "$PUBLISH" = true ]; then
+              echo "- Signed, attached and **published**: https://github.com/$PUB/releases/tag/$TAG"
+            else
+              echo "- Signed and attached; the draft is **not published** (publish=false)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
