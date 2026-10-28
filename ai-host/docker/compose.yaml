@@ -1,0 +1,28 @@
+# Jodd AI host. Start: docker compose up -d   Logs (password, fingerprint): docker compose logs
+# Guide: https://github.com/BBM-Co-ORG/Jodd-public/blob/main/docs/ai-host/INSTALL.md
+name: jodd-ai-host
+services:
+  ai-host:
+    image: ghcr.io/bbm-co-org/jodd-ai-host:latest
+    container_name: jodd-ai-host
+    hostname: jodd-ai-host
+    init: true                      # a stopped CLI is reaped, not left as a zombie
+    restart: unless-stopped
+    environment:
+      JODD_AI_PASSWORD: ${JODD_AI_PASSWORD:-}   # empty = generate one (shown once in the logs)
+      JODD_AI_PORT: ${JODD_AI_PORT:-2222}
+    ports:
+      # JODD_AI_BIND is the address this port is published on.
+      #  - Home or office LAN: keep the default 0.0.0.0, so a phone on the same Wi-Fi can reach it.
+      #  - VPS or cloud server: set JODD_AI_BIND to a VPN address (for example your Tailscale
+      #    address) or to 127.0.0.1. Docker-published ports bypass ufw and firewalld, so with
+      #    0.0.0.0 the port is open to the whole internet while password login is on.
+      #    Run `docker compose exec ai-host jodd-ai-host lock` as soon as Setup in Jodd is done.
+      # Never forward this port on your router.
+      - "${JODD_AI_BIND:-0.0.0.0}:${JODD_AI_PORT:-2222}:22"
+    volumes:
+      - home:/home/jodd-ai              # CLIs, their sign-ins, Jodd's keys
+      - state:/var/lib/jodd-ai-host     # host key (fingerprint), password, lock state
+volumes:
+  home:
+  state:

@@ -1,0 +1,17 @@
+js window.INITIAL = '<div>first</div><div>second</div>'; window.CARET = ['div:last-child','start']; window.setup(); 0
+key shift+cmd+9
+snap formatTask, caret at line START
+type t
+snap typed t
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

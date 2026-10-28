@@ -1,0 +1,4 @@
+#!/bin/sh
+# Same as FAKE_CLAUDE in wrapper.rs tests: a JSON envelope like `claude -p --output-format json`.
+p=$(cat)
+printf '{"result":"%s","args":%s}' "$p" "$#"
