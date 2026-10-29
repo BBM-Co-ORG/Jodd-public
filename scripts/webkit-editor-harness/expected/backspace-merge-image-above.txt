@@ -1,0 +1,6 @@
+Backspace, image above the | <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>Heading</h2>   caret="Heading"@0
+typed z                    | <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>zHeading</h2>   caret="zHeading"@1
+cmd+z #1                   | <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div><br></div><h2>Heading</h2>   caret=DIV@0
+cmd+z #2                   | <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div><br></div><h2>Heading</h2>   caret=DIV@0
+redo #1                    | <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>zHeading</h2>   caret="zHeading"@1
+redo #2                    | <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>zHeading</h2>   caret="zHeading"@1

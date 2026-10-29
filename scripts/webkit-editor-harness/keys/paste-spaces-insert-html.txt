@@ -1,0 +1,3 @@
+js window.INITIAL = '<div>base</div>'; window.CARET = ['div','end']; window.setup(); 0
+js document.execCommand('insertHTML', false, MT.plainTextToPasteHtml(' a  b\t c   ')); 0
+snap insertHTML spaces
