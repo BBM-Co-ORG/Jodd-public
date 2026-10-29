@@ -1,0 +1,721 @@
+# Release pipeline for Jodd — the BUILD half. Runs on BBM-Co-ORG/Jodd-public.
+#
+# Why it runs there (decided 2026-10-26): Jodd-public is a public repository,
+# and GitHub-hosted Linux, Windows and macOS runners are free for public
+# repositories. The private repository ran past its Actions spending limit in
+# October 2026, and release builds were about 60% of that bill. All runs of
+# this workflow, Oct 1–25 2026 (18 releases plus cache warm-ups):
+#
+#   macOS    228 min × $0.062  ≈ $14.14
+#   Windows  880 min × $0.010  ≈  $8.80
+#   Linux   ~470 min × $0.006  ≈  $2.80   (rate assumed; Android ~11 + proof ~13
+#                                          + uploads ~2 min per release)
+#   total  ~1,580 min           ≈ $25.75 per 25 days → ~$31 a month, ~$1.43 a release
+#
+# What stays private is release-sign.yml, ~3 Linux minutes a release (~65
+# minutes and ~$0.40 a month at the same pace). That saves ~85 billed minutes
+# and ~$1.40 per release, ~1,800 minutes and ~$30 a month.
+#
+# This file lives in the PRIVATE repository and reaches Jodd-public through
+# public-mirror-prep/scripts/sync-to-public.sh, like every other file. In the
+# private repository every job below is skipped by its `if:` — a skipped job
+# bills nothing — so a dispatch there is a no-op.
+#
+# ── The other half ──────────────────────────────────────────────────────────
+# .github/workflows/release-sign.yml runs ONLY in the private repository,
+# because that is the only place the Android release keystore exists. It
+# downloads this run's UNSIGNED APK, signs it, checks the signer against
+# docs/android/assetlinks.json, attaches it to this run's draft and only then
+# publishes. The keystore must never reach Jodd-public: anyone holding it can
+# sign an APK that Android hands Jodd's App Links OAuth callback to (CLAUDE.md
+# gotcha #8), and it cannot be rotated without breaking updates for every
+# existing install.
+#
+# ── One release, end to end (RELEASE.md §4 is the checklist) ───────────────
+#   1. Private repo: bump, merge, push tag vX.Y.Z. That fires nothing.
+#   2. You: public-mirror-prep/scripts/sync-to-public.sh vX.Y.Z — force-pushes
+#      the sanitized snapshot to Jodd-public's main. Interactive on purpose.
+#   3. You: scripts/release-dispatch.sh vX.Y.Z — dispatches THIS workflow on
+#      Jodd-public's main, waits on your machine (no runner billed while it
+#      waits), then dispatches release-sign.yml in the private repository.
+#
+# ── Triggers ────────────────────────────────────────────────────────────────
+# workflow_dispatch only.
+# Deliberately NO `push: tags`: publishing the draft creates the tag on
+# Jodd-public, and a tag trigger here would start a second build on it — the
+# v0.17.7 asset-pollution trap found 2026-07-23, when Jodd-public's old copy
+# of this file rebuilt a stale tree into a release that had already shipped.
+# Deliberately no pull_request or pull_request_target either: nothing a fork
+# sends can reach this workflow or its secrets.
+#
+# ── Exact tree ──────────────────────────────────────────────────────────────
+# A dispatch runs on main, whose HEAD is the synced snapshot, and every job
+# checks out that one commit (github.sha is fixed at dispatch). `preflight`
+# refuses unless that commit's message names `upstream_sha`, its version is
+# `tag`, and CHANGELOG.md has a section for it. release-sign.yml then compares
+# the snapshot's tree with the private commit, entry by entry.
+#
+# ── Jobs ────────────────────────────────────────────────────────────────────
+#   preflight          the checks above, ~20 s, before any build starts
+#   build              macOS aarch64 + Windows bundles, and jodd-mcp for each
+#                      (built in the same job, reusing its compiled crates)
+#   build-android      arm64 APK, UNSIGNED, handed over as a workflow
+#                      artifact — never a release asset (release-sign.yml
+#                      adds the signed one)
+#   android-encryption the on-device SQLCipher proof (android-encryption.yml
+#                      via workflow_call — one definition, not a copy).
+#                      Gotcha #13: nothing is published unless it passed;
+#                      `stage` needs it, and release-sign.yml checks its
+#                      conclusion by name, because a SKIPPED job would still
+#                      leave this run green.
+#   stage              sets the draft's notes from CHANGELOG.md and checks
+#                      it holds exactly the six desktop + jodd-mcp assets
+#
+# `preflight` creates the release as a DRAFT on Jodd-public, visible only to
+# people with write access, and every build uploads into it; release-sign.yml
+# publishes it. A dry run
+# (`dry_run`, the default in the Actions tab) builds into draft
+# vX.Y.Z-dryrun.N, which release-sign.yml signs but refuses to publish.
+#
+# ── No Rust cache, on purpose ───────────────────────────────────────────────
+# Release builds compile from scratch and restore no Rust cache. A cache is
+# not source: the tree check in release-sign.yml cannot see it, and anything
+# that runs on Jodd-public's main — a push past its ruleset, any job of any
+# workflow there, a compromised action or build script inside one — can write
+# main-scoped cache entries that a release would then link into the desktop
+# binaries and into the APK the release key signs. Minutes are free here, so
+# the only cost is wall time: Windows cargo ~25 min cold vs ~7 warm (measured
+# on the private repository 2026-10-15/18), macOS ~5 min either way, Android
+# longer by a similar factor, not yet measured on this runner. The Mon/Thu
+# warm-up schedule and `cache_only` that fed the old cache are gone with it.
+# The npm cache setup-node restores stays: `npm ci` checks every package
+# against package-lock.json's integrity hashes.
+#
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# Jodd-public → Settings → Environments → `release` (deployment branches:
+# `main` only), so only jobs that run main's file can read them:
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET  desktop OAuth client. Required:
+#                       the build job's first step fails if either is empty.
+#   MS_CLIENT_ID        Microsoft public client (no secret pairs with it).
+#                       Required, checked the same way — every release from
+#                       2026-08-17 through v0.33.0 shipped without it.
+#   GOOGLE_CLIENT_ID_ANDROID / GOOGLE_CLIENT_SECRET_ANDROID  the Android
+#                       build's Web-application-type client (gotcha #8).
+#                       Required, checked by build-android's first step.
+# All five end up inside the shipped binaries, where anyone can read them;
+# that is why they may live in a public repository and the keystore may not.
+#
+# No signing secrets here. Desktop code signing (APPLE_*, WINDOWS_*) is still
+# not set up — see RELEASE.md "Code signing" for the env block tauri-action
+# expects when it is.
+
+name: Release
+
+run-name: ${{ format('Release {0}{1}', inputs.tag, inputs.dry_run && ' (dry run)' || '') }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag, e.g. v0.39.0 — must match tauri.conf.json'
+        required: true
+        type: string
+      upstream_sha:
+        description: 'Full SHA of the private commit the snapshot on main was made from (the tag''s commit)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build into draft vX.Y.Z-dryrun.N, which release-sign.yml never publishes'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.repository == 'BBM-Co-ORG/Jodd-public'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the draft (it sees drafts only with write)
+    outputs:
+      release_tag: ${{ steps.check.outputs.release_tag }}
+      version: ${{ steps.check.outputs.version }}
+      release_id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Seconds, and it fails before ~30 minutes of builds rather than after.
+      - name: Check main is the snapshot of the release asked for
+        id: check
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$GITHUB_REF" == refs/heads/main ]] \
+            || fail "Dispatch this on main (got $GITHUB_REF): main is the synced snapshot."
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || fail "tag must look like v1.2.3 (got '$TAG')."
+          [[ "$UPSTREAM_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || fail "upstream_sha must be a full 40-character lowercase commit SHA."
+          VERSION="${TAG#v}"
+
+          # sync-to-public.sh writes "...upstream repository at\ncommit <sha>."
+          # into every snapshot's message.
+          NAMED="$(git log -1 --format=%B HEAD | grep -oE 'commit [0-9a-f]{40}' | head -1 | cut -d' ' -f2 || true)"
+          [[ "$NAMED" == "$UPSTREAM_SHA" ]] \
+            || fail "main ($GITHUB_SHA) is a snapshot of '${NAMED:-no upstream commit}', not $UPSTREAM_SHA. Run public-mirror-prep/scripts/sync-to-public.sh $TAG in the private repo first."
+
+          CONF="$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+          PKG="$(node -p 'require("./package.json").version')"
+          [[ "$CONF" == "$VERSION" && "$PKG" == "$VERSION" ]] \
+            || fail "Version mismatch: tag $VERSION, tauri.conf.json $CONF, package.json $PKG."
+          # Exits 1 when CHANGELOG.md has no section — `stage` needs it too.
+          node scripts/changelog-section.mjs "$VERSION" > /dev/null
+
+          if [[ "$DRY_RUN" == true ]]; then
+            RELEASE_TAG="${TAG}-dryrun.${GITHUB_RUN_NUMBER}"
+          else
+            RELEASE_TAG="$TAG"
+          fi
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building **$RELEASE_TAG** from snapshot \`$GITHUB_SHA\` of upstream \`$UPSTREAM_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+
+      # The draft is made HERE, once, and every build uploads into it by id.
+      # Left to tauri-action, each matrix leg looks for a draft after its
+      # build and creates one if none exists, so two legs finishing together
+      # make two drafts with the same tag. A draft does not create its tag;
+      # GitHub creates it at target_commitish when release-sign.yml publishes.
+      - name: Create the draft (or reuse this commit's)
+        id: draft
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.check.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          found="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | \"\(.id) \(.draft) \(.target_commitish)\"")"
+          count="$(grep -c . <<<"$found" || true)"
+          if [[ "$count" -gt 1 ]]; then
+            fail "$GITHUB_REPOSITORY has $count releases tagged $RELEASE_TAG. Delete the extra drafts and dispatch again."
+          elif [[ "$count" -eq 1 ]]; then
+            read -r id draft target <<<"$found"
+            [[ "$draft" == true ]] \
+              || fail "$RELEASE_TAG is already published on $GITHUB_REPOSITORY. Bump the version instead of rebuilding it."
+            # tauri-action never moves an existing draft's commit, so a
+            # re-dispatch after a re-sync would publish new binaries under a
+            # tag on the OLD snapshot.
+            [[ "$target" == "$GITHUB_SHA" ]] \
+              || fail "draft $RELEASE_TAG targets $target, not $GITHUB_SHA. Delete it (gh release delete $RELEASE_TAG -R $GITHUB_REPOSITORY --yes) and dispatch again."
+            echo "Reusing draft $RELEASE_TAG (id $id) from an earlier attempt."
+          else
+            id="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$RELEASE_TAG" -f target_commitish="$GITHUB_SHA" \
+              -f name="Jodd $RELEASE_TAG" -F draft=true -F prerelease=false \
+              -f body="Release notes are set from CHANGELOG.md by the stage job." \
+              --jq .id)"
+            echo "Created draft $RELEASE_TAG (id $id) at $GITHUB_SHA."
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: preflight
+    if: github.repository == 'BBM-Co-ORG/Jodd-public'
+    environment: release
+    permissions:
+      contents: write   # tauri-action and jodd-mcp upload into preflight's draft
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS Intel (macos-13, x86_64-apple-darwin) is still dropped. It
+        # was dropped to save minutes, which no longer applies here — re-add it
+        # when Intel Macs should get a build, with its own mcp_triple/out_dir.
+        #
+        # `mcp_triple` names the jodd-mcp archive and `out_dir` is where cargo
+        # puts it: the Windows desktop build passes no --target, so its output
+        # is target/release, not target/<triple>/release.
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            mcp_triple: aarch64-apple-darwin
+            out_dir: target/aarch64-apple-darwin/release
+            archive_ext: tar.gz
+          - platform: windows-latest
+            args: ''
+            mcp_triple: x86_64-pc-windows-msvc
+            out_dir: target/release
+            archive_ext: zip
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # An unset secret expands to "" without complaint, and build.rs embeds
+      # these through `option_env!`, so a missing one still compiles: the
+      # binary simply ships unable to sign in to that provider. Every release
+      # from 2026-08-17 through v0.33.0 shipped exactly that way for Microsoft —
+      # the MS_CLIENT_ID secret was never created — and it was found by a user,
+      # not by CI. First step, so it fails before minutes are spent on
+      # toolchains. jodd-mcp is built in this same job, so this covers it too.
+      - name: Require OAuth client secrets
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET MS_CLIENT_ID; do
+            if [ -z "${!var//[[:space:]]/}" ]; then missing+=("$var"); fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing secret(s): ${missing[*]}"
+            echo "build.rs embeds these at compile time; without them the binary"
+            echo "builds fine and then cannot start a sign-in for that provider."
+            echo "Add them to the 'release' environment under Settings →"
+            echo "Environments on $GITHUB_REPOSITORY, then re-run this workflow."
+            exit 1
+          fi
+          echo "OK: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and MS_CLIENT_ID are set."
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS runners need the cross-arch target explicitly.
+          targets: "${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}"
+
+      # No Rust cache — see the header.
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build & bundle (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Scope follows the job's `permissions:` (contents: write — enough
+          # to create the draft release and upload into it).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Embedded into the binary at compile time via src-tauri/build.rs.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          # Microsoft is a public client — one id, no secret to pair with it.
+          # Without this the desktop build ships unable to start a Microsoft
+          # sign-in at all; see src-tauri/build.rs for why embedding it is the
+          # right call even though corporate M365 consent stays admin-gated.
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          # macOS / Windows code signing intentionally left UNSET while we
+          # don't have certs. tauri-action checks "is env defined" not "is it
+          # non-empty", so passing empty `${{ secrets.APPLE_CERTIFICATE }}`
+          # values triggers the signing path with an empty cert → security
+          # import fails. When there is an Apple Developer cert / Windows
+          # cert, add the secrets to the `release` environment AND uncomment
+          # the block below — tauri-action picks them up automatically.
+          #
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # The draft preflight created. With releaseId set, tauri-action
+          # uploads into that release and ignores tagName/releaseName; it
+          # deletes a same-name asset first, so a re-run replaces cleanly.
+          releaseId: ${{ needs.preflight.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+      # Sanity check: Jodd.app/Contents/MacOS/ must contain exactly ONE binary
+      # (the main `jodd` executable). On macOS Tahoe (26.x), launchd refuses
+      # to spawn ad-hoc signed bundles with multiple binaries in MACOS/ — the
+      # process hangs at _dyld_start (RSS=32K) with no useful error. This
+      # used to happen silently when a dev binary in src-tauri/src/bin/ was
+      # accidentally pulled into the bundle by Tauri's bundler (gotcha #3).
+      # The gate in Cargo.toml ([[bin]] required-features=["debug-bins"])
+      # should prevent it; this step is the belt-and-braces in case someone
+      # removes the gate or adds a new binary without one.
+      - name: Verify macOS bundle layout
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          MACOS_DIR=target/${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin/' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin/' || '' }}release/bundle/macos/Jodd.app/Contents/MacOS
+          if [ ! -d "$MACOS_DIR" ]; then
+            echo "ERROR: $MACOS_DIR does not exist — bundling likely failed earlier."
+            exit 1
+          fi
+          count=$(ls -1 "$MACOS_DIR" | wc -l | tr -d ' ')
+          if [ "$count" -ne 1 ]; then
+            echo "ERROR: $MACOS_DIR has $count entries (expected exactly 1: jodd)."
+            ls -la "$MACOS_DIR"
+            echo ""
+            echo "Cause: an extra binary got bundled into Contents/MacOS/."
+            echo "Fix: gate it in src-tauri/Cargo.toml under [[bin]] with"
+            echo "     required-features = [\"debug-bins\"] so release builds skip it."
+            exit 1
+          fi
+          echo "OK: Contents/MacOS/ contains only the main binary."
+
+      # jodd-mcp is a plain Rust binary (MCP server), not a Tauri bundle, so
+      # tauri-action can't build it — but it depends on jodd_lib, so it needs
+      # the same OpenSSL, SQLCipher and ~450 crates the desktop build just
+      # compiled. It used to be a separate `build-mcp` job that compiled all
+      # of that again from a cold cache (18–36 min on Windows). Here it reuses
+      # this job's target dir: same `args`, so the same output dir. Only
+      # crates whose features differ recompile — measured on an M-series Mac
+      # 2026-10-20: 43 crates in 3m47s after a 7m06s desktop build, and NOT
+      # openssl-src, the vendored C build that is ~10 min of a cold Windows run.
+      #
+      # dist/ must exist because lib.rs's generate_context!() embeds it at
+      # compile time; tauri build's beforeBuildCommand already produced it.
+      - name: Build jodd-mcp
+        shell: bash
+        env:
+          # Not required by jodd-mcp itself, but src-tauri/build.rs runs as
+          # part of the same workspace compile and reads these; passing them
+          # keeps its build.rs behavior identical to the desktop build's.
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+        run: cargo build --release -p jodd-mcp ${{ matrix.args }}
+
+      - name: Package + upload jodd-mcp
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRIPLE: ${{ matrix.mcp_triple }}
+          OUT_DIR: ${{ matrix.out_dir }}
+        run: |
+          set -euo pipefail
+          BIN="${OUT_DIR}/jodd-mcp"
+          [ "${{ runner.os }}" = "Windows" ] && BIN="${BIN}.exe"
+          if [ ! -f "$BIN" ]; then
+            echo "ERROR: expected binary not found at $BIN"
+            find "$OUT_DIR" -maxdepth 1 || true
+            exit 1
+          fi
+          STAGE="jodd-mcp_${RELEASE_TAG}_${TRIPLE}"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/"
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            DEST="${STAGE}.zip"
+            7z a "$DEST" "$STAGE" >/dev/null
+          else
+            DEST="${STAGE}.tar.gz"
+            tar czf "$DEST" "$STAGE"
+          fi
+          gh release upload "$RELEASE_TAG" "$DEST" --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Separate from the desktop matrix: Android needs a different toolchain
+  # (JDK, Android SDK/NDK) and a different bundler (the raw `tauri android
+  # build` CLI, not tauri-action). Starts as soon as preflight passes, in
+  # parallel with everything else.
+  #
+  # UNSIGNED, explicitly. With no ANDROID_KEYSTORE_PATH in the environment,
+  # src-tauri/gen/android/app/build.gradle.kts creates no signingConfig, the
+  # release build type has none, and Gradle writes
+  # app-universal-release-unsigned.apk instead of failing. `tauri android
+  # build` accepts that: cargo-mobile2 looks for both `-release.apk` and
+  # `-release-unsigned.apk` (src/opts.rs, Profile::suffixes). An unsigned APK
+  # cannot be installed, so this artifact is harmless if it leaks; the one
+  # users get is the copy release-sign.yml signs in the private repository.
+  build-android:
+    needs: preflight
+    if: github.repository == 'BBM-Co-ORG/Jodd-public'
+    environment: release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Same stance as the desktop job's check: a missing secret still
+      # compiles, and the APK then ships unable to start a Google sign-in.
+      - name: Require Android OAuth client secrets
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID_ANDROID: ${{ secrets.GOOGLE_CLIENT_ID_ANDROID }}
+          GOOGLE_CLIENT_SECRET_ANDROID: ${{ secrets.GOOGLE_CLIENT_SECRET_ANDROID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in GOOGLE_CLIENT_ID_ANDROID GOOGLE_CLIENT_SECRET_ANDROID; do
+            if [ -z "${!var//[[:space:]]/}" ]; then missing+=("$var"); fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing secret(s): ${missing[*]} — add them to the"
+            echo "'release' environment on $GITHUB_REPOSITORY (a Web-application"
+            echo "type client, see gotcha #8 / docs/android/APP-LINKS-SETUP.md)."
+            exit 1
+          fi
+          echo "OK: GOOGLE_CLIENT_ID_ANDROID and GOOGLE_CLIENT_SECRET_ANDROID are set."
+
+      # The keystore lives only in the private repository. If any of this
+      # ever appears here, someone has started moving it — stop. Note that
+      # an EMPTY ANDROID_KEYSTORE_PATH is not "unset" to Gradle: getenv()
+      # returns "", and file("") then fails the build — so never pass it
+      # at all, not even blank.
+      - name: Refuse signing material (this build is unsigned on purpose)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for var in ANDROID_KEYSTORE_PATH ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -n "${!var+x}" ]; then
+              echo "ERROR: $var is set in this job. Android signing happens only in"
+              echo "the private repository (release-sign.yml); see gotcha #8."
+              exit 1
+            fi
+          done
+          echo "OK: no signing material in the environment."
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Rust (stable) with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android'
+
+      # No Rust cache — see the header.
+
+      - name: Install Android SDK
+        # Pinned to v3 deliberately, despite the "forced to run on Node 24"
+        # deprecation warning this produces. The NDK cleanup step immediately
+        # below (see its own comment) is empirically tuned to v3's specific
+        # pre-install behavior (it drops NDK 29.0.14206865 alongside our
+        # pinned 27.3.13750724). v4 may pre-install a different set, which
+        # could silently break that cleanup without a real Android build to
+        # verify against. Bump only alongside re-verifying the NDK step.
+        #
+        # `packages` overrides the default 'tools platform-tools': Google
+        # stopped serving the deprecated `tools` package on 2026-09-15, and
+        # the default then fails the step (android-actions/setup-android#537).
+        # Same fix as android-encryption.yml, which proves it on every run.
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install NDK
+        # Pinned to match the version this project has been built and
+        # verified against locally (r27d) — see
+        # docs/superpowers/HANDOFF-2026-07-31-android-bringup.md. NDK 27 was
+        # chosen deliberately over 28/29; do not "helpfully" bump this to
+        # latest without re-reading why.
+        #
+        # Setting NDK_HOME to this path is NOT enough on its own — confirmed
+        # empirically (first CI run): android-actions/setup-android@v3
+        # pre-installs a newer NDK (29.0.14206865 as of this writing), and
+        # Tauri's own build tooling ignores NDK_HOME entirely, instead always
+        # auto-picking the highest-versioned NDK it finds under
+        # $ANDROID_HOME/ndk/. So the pin only holds if 27.3.13750724 is the
+        # ONLY version present — remove every other one after installing it.
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;27.3.13750724"
+          find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d ! -name '27.3.13750724' -exec rm -rf {} +
+          echo "Installed NDK versions:"; ls "$ANDROID_HOME/ndk"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build (Tauri Android, release, arm64 APK, unsigned)
+        # arm64-v8a only, and the APK only. Both were decided from the v0.34.0
+        # release run (2026-10-18), whose build step took 42m43s: cargo ran
+        # NINE times — the CLI's own aarch64 pass, then Gradle's APK pass over
+        # all four ABIs (~6.5 min each on a cold cache), then Gradle's AAB pass
+        # relinking all four again (~1m50s each). Nothing ever uploaded the
+        # AAB; only the APK is published.
+        #
+        # Dropping armeabi-v7a, x86 and x86_64 means 32-bit ARM phones cannot
+        # install Jodd, and Intel/AMD Chromebooks and x86 emulators run it
+        # through ARM translation. Every device Jodd has been tested on (S23
+        # FE, Tab S7) is arm64. To bring an ABI back, add `--target <name>`
+        # here plus its rustup target and its CC/CXX/AR/RANLIB/LINKER block
+        # below — the env block is per ABI, see its comment.
+        env:
+          # ANDROID_HOME is already exported into the job environment by
+          # android-actions/setup-android; NDK_HOME is built from it here
+          # since that action doesn't export NDK_HOME itself.
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+          GOOGLE_CLIENT_ID_ANDROID: ${{ secrets.GOOGLE_CLIENT_ID_ANDROID }}
+          GOOGLE_CLIENT_SECRET_ANDROID: ${{ secrets.GOOGLE_CLIENT_SECRET_ANDROID }}
+          # MS_CLIENT_ID is deliberately NOT passed here, and this is not an
+          # oversight to tidy up: `backend_kind_for_signin` (lib.rs) refuses
+          # Microsoft sign-in on Android outright, because the flow is loopback
+          # and `auth::wait_for_callback_blocking` is cfg-ed out on Android
+          # (it binds 0.0.0.0:8080 — an unauthenticated server on a phone).
+          # Embedding a credential the code refuses to reach buys nothing.
+          #
+          # No ANDROID_KEYSTORE_* either — see the job comment above.
+          #
+          # `tauri android build` invokes cargo for each target itself and
+          # never sets these, so openssl-src's vendored OpenSSL build (needed
+          # by SQLCipher as of 74bc7b0) falls back to plain `ranlib`/`ar` on
+          # PATH — which isn't the Android cross one, so `make install_dev`
+          # dies with "aarch64-linux-android-ranlib: not found" (measured on
+          # this job, v0.24.0's first release run). Same fix as the manual
+          # cross-compile step in android-encryption.yml, for the aarch64
+          # target and pointed at API 24 (this app's minSdk —
+          # build.gradle.kts) rather than that job's 30 (chosen there only to
+          # match the test emulator). AR/RANLIB are NDK-unversioned (one
+          # binary covers every API level); the C/C++ compiler wrappers are
+          # API-versioned, hence the `24` in each.
+          TOOLCHAIN: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin
+          CC_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CXX_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
+          AR_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          RANLIB_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+        run: |
+          set -euo pipefail
+          for f in "$CC_aarch64_linux_android" "$TOOLCHAIN/llvm-ar" "$TOOLCHAIN/llvm-ranlib"; do
+            [ -x "$f" ] || { echo "ERROR: NDK tool missing: $f"; ls "$TOOLCHAIN" || true; exit 1; }
+          done
+          npx tauri android build --apk --target aarch64
+
+      - name: Locate + name the unsigned APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          if [ -e "$OUT/app-universal-release.apk" ]; then
+            echo "ERROR: Gradle produced a SIGNED APK ($OUT/app-universal-release.apk)."
+            echo "Something supplied signing material to this build; see gotcha #8."
+            exit 1
+          fi
+          SRC="$OUT/app-universal-release-unsigned.apk"
+          if [ ! -f "$SRC" ]; then
+            echo "ERROR: expected unsigned APK not found at $SRC"
+            find src-tauri/gen/android/app/build/outputs -iname '*.apk' || true
+            exit 1
+          fi
+          DEST="Jodd_${RELEASE_TAG}_android-universal-unsigned.apk"
+          cp "$SRC" "$DEST"
+          sha256sum "$DEST" > "$DEST.sha256"
+          cat "$DEST.sha256"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+      # An artifact, not a release asset: a draft holding an unsigned APK is
+      # one "Publish" click away from shipping it. 7 days, so a re-run of
+      # release-sign.yml after a billing refusal still finds it (the private
+      # repository's Actions have been refused for that twice, 2026-08-29 and
+      # 2026-10-22).
+      - name: Hand the unsigned APK to release-sign.yml
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-unsigned
+          path: |
+            ${{ steps.apk.outputs.path }}
+            ${{ steps.apk.outputs.path }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # The at-rest encryption proof, gating publication (gotcha #13). Defined in
+  # its own workflow (so it stays runnable standalone) and pulled in here via
+  # `workflow_call`, so there is one definition rather than a copy that can
+  # drift. It needs no secrets: the on-device test uses JODD_TEST_DIR, not the
+  # keychain.
+  #
+  # A failure here leaves every binary built and the draft intact, but
+  # `stage` does not run and release-sign.yml refuses to publish, so nothing
+  # reaches users. v0.24.1 shipped while this job was red, because the job
+  # that published did not depend on it — exactly the hole both checks close.
+  android-encryption:
+    needs: preflight
+    if: github.repository == 'BBM-Co-ORG/Jodd-public'
+    uses: ./.github/workflows/android-encryption.yml
+
+  stage:
+    needs: [preflight, build, build-android, android-encryption]
+    if: github.repository == 'BBM-Co-ORG/Jodd-public'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # edit the draft's notes
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set the draft's notes from CHANGELOG.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/changelog-section.mjs "$VERSION" > notes.md
+          echo "Notes for $RELEASE_TAG:"; cat notes.md
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      # preflight already refused a draft at another commit; this re-checks
+      # the state the builds left, and release-sign.yml checks it again.
+      - name: Check the draft points at this commit and holds the six assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish,assets)"
+          [ "$(jq -r .isDraft <<<"$json")" = true ] || { echo "ERROR: $RELEASE_TAG is not a draft."; exit 1; }
+          target="$(jq -r .targetCommitish <<<"$json")"
+          if [ "$target" != "$GITHUB_SHA" ]; then
+            echo "ERROR: draft $RELEASE_TAG targets $target, not this run's commit $GITHUB_SHA."
+            echo "Delete the stale draft (gh release delete $RELEASE_TAG -R $GITHUB_REPOSITORY) and dispatch again."
+            exit 1
+          fi
+          diff <(scripts/release-expected-assets.sh "$VERSION" "$RELEASE_TAG" | sort) \
+               <(jq -r '.assets[].name' <<<"$json" | sort) \
+            || { echo "ERROR: the draft's assets differ from the expected six (< expected, > actual)."; exit 1; }
+          echo "OK: draft $RELEASE_TAG targets $GITHUB_SHA and holds the expected assets."
+
+      - name: Say what happens next
+        shell: bash
+        run: |
+          {
+            echo "### Built and staged: draft \`$RELEASE_TAG\`"
+            echo
+            echo "The Android encryption proof passed. The APK is the unsigned artifact"
+            echo "\`android-apk-unsigned\`; nothing is published yet. Next, in the private repo"
+            echo "(scripts/release-dispatch.sh does this for you):"
+            echo
+            echo '```bash'
+            echo "gh workflow run release-sign.yml -R BBM-Co-ORG/Jodd --ref main -f tag=$RELEASE_TAG -f public_run_id=$GITHUB_RUN_ID -f publish=$([[ "$RELEASE_TAG" == *-dryrun.* ]] && echo false || echo true)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
