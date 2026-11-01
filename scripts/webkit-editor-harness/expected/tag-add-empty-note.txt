@@ -1,0 +1,6 @@
+addTag on truly empty note | #work   caret=BODY@3
+addTag home                | #work #home   caret=BODY@3
+cmd+z #1                   |    caret=DIV@0
+cmd+z #2                   |    caret=DIV@0
+redo #1                    | #work #home   caret="#work #home"@11
+redo #2                    | #work #home   caret="#work #home"@11

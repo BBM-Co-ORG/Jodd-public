@@ -1,0 +1,6 @@
+replaceAll foo after İ (en | <div>İzmir notes FOO</div><div>İzmir bar FOO</div>   caret="İzmir notes FOO"@15
+replaceAll bar after İ (mi | <div>İzmir notes FOO</div><div>İzmir X FOO</div>   caret="İzmir X FOO"@7
+cmd+z #1                   | <div>İzmir notes foo</div><div>İzmir bar foo</div>   caret="İzmir bar foo"@10
+cmd+z #2                   | <div>İzmir notes foo</div><div>İzmir bar foo</div>   caret="İzmir bar foo"@10
+redo #1                    | <div>İzmir notes FOO</div><div>İzmir X FOO</div>   caret="İzmir X FOO"@7
+redo #2                    | <div>İzmir notes FOO</div><div>İzmir X FOO</div>   caret="İzmir X FOO"@7

@@ -1,0 +1,4 @@
+typed xy                   | <div>basexy</div>   caret="basexy"@6
+pasted                     | <div>basexyhttps://example.com/a</div>   caret="basexyhttps://example.com/a"@27   MENU=["Paste"]
+cmd+z #1                   | <div>basexy</div>   caret="basexy"@6
+cmd+z #2                   | <div>base</div>   caret=DIV@1

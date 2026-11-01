@@ -1,0 +1,9 @@
+formatTask                 | <div><input type="checkbox" contenteditable="false">&nbsp;first</div><div>second</div>   caret=" first"@1
+typed t                    | <div><input type="checkbox" contenteditable="false">&nbsp;tfirst</div><div>second</div>   caret=" tfirst"@2
+Enter → next row           | <div><input type="checkbox" contenteditable="false">&nbsp;tfirst</div><div><input type="checkbox" contenteditable="false">&nbsp;</div><div>second</div>   caret=" "@1
+cmd+z #1                   | <div><input type="checkbox" contenteditable="false">&nbsp;tfirst</div><div>second</div>   caret=DIV@2
+cmd+z #2                   | <div><input type="checkbox" contenteditable="false">&nbsp;first</div><div>second</div>   caret=" first"@1
+cmd+z #3                   | <div>first</div><div>second</div>   caret="first"@0
+redo #1                    | <div><input type="checkbox" contenteditable="false">&nbsp;first</div><div>second</div>   caret=" first"@1
+redo #2                    | <div><input type="checkbox" contenteditable="false">&nbsp;tfirst</div><div>second</div>   caret=" tfirst"@2
+redo #3                    | <div><input type="checkbox" contenteditable="false">&nbsp;tfirst</div><div><input type="checkbox" contenteditable="false">&nbsp;</div><div>second</div>   caret=" "@1

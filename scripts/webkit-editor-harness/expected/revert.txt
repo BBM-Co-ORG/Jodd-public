@@ -1,0 +1,7 @@
+trigger "# "               | <div>first line</div><h1><br></h1>   caret=H1@0
+Backspace revert           | <div>first line</div><div>#&nbsp;</div>   caret="# "@2
+typed x                    | <div>first line</div><div># x</div>   caret="# x"@3
+cmd+z #1                   | <div>first line</div><div>#&nbsp;</div>   caret="# "@2
+cmd+z #2                   | <div>first line</div><h1>#&nbsp;</h1>   caret="# "@2
+redo #1                    | <div>first line</div><div>#&nbsp;</div>   caret="# "@2
+redo #2                    | <div>first line</div><div># x</div>   caret="# x"@3
