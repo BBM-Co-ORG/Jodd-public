@@ -1,0 +1,12 @@
+type abc def
+snap typed "abc def"
+key ctrl+a
+snap ctrl+a (native: line start)
+key ctrl+e
+snap ctrl+e (native: line end)
+key ctrl+b
+snap ctrl+b (native: back 1 char)
+key ctrl+cmd+z
+snap ctrl+cmd+z (must NOT undo)
+key cmd+z
+snap cmd+z (undo)

@@ -1,0 +1,16 @@
+1208
+[[6,["onHasPreviousNextChanged",{"hasPrevious":"false","hasNext":"true"}]]
+,[7,["onSubtitlesTrackChanged",{"style":"{\"background\":\"#000000\",\"backgroundOpacity\":1,\"charEdgeStyle\":\"none\",\"color\":\"#FFFFFF\",\"fontFamily\":4,\"fontSizeIncrement\":0,\"fontStyle\":0,\"textOpacity\":1,\"windowColor\":\"#0000FF\",\"windowOpacity\":0,\"backgroundOverride\":true,\"backgroundOpacityOverride\":true,\"charEdgeStyleOverride\":true,\"colorOverride\":true,\"fontFamilyOverride\":true,\"fontSizeIncrementOverride\":true,\"textOpacityOverride\":true,\"windowColorOverride\":true,\"windowOpacityOverride\":true,\"fontFamilyOption\":\"propSans\"}","videoId":"uK660HUX-1Y"}]]
+,[8,["onVolumeChanged",{"volume":"100","muted":"false"}]]
+,[9,["onPartyGamesModeChanged",{"isActive":"false"}]]
+,[10,["nowPlaying",{"cpn":"CPN_REDACTED","allowDislike":"true","playabilityStatus":"OK","allowLike":"true","allowYouChat":"true","videoId":"uK660HUX-1Y","allowComment":"true","listId":"RQ_REDACTED_QUEUE_ID","duration":"790.201","currentTime":"32.4","allowSubscribe":"true","mdxExpandedReceiverVideoIdList":"uK660HUX-1Y","loadedTime":"72.667","state":"1","seekableEndTime":"790.167","seekableStartTime":"0"}]]
+]
+426
+[[11,["nowPlaying",{"cpn":"CPN_REDACTED","allowDislike":"true","playabilityStatus":"OK","allowLike":"true","videoId":"uK660HUX-1Y","allowYouChat":"true","allowComment":"true","currentTime":"32.854","listId":"RQ_REDACTED_QUEUE_ID","duration":"790.201","allowSubscribe":"true","mdxExpandedReceiverVideoIdList":"uK660HUX-1Y","loadedTime":"72.667","state":"1","seekableStartTime":"0","seekableEndTime":"790.167"}]]
+]
+61
+[[12,["onAutoplayModeChanged",{"autoplayMode":"ENABLED"}]]
+]
+17
+[[13,["noop"]]
+]

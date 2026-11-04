@@ -1,0 +1,17 @@
+js window.INITIAL = '<ul><li>buy milk</li></ul>'; window.CARET = ['li','end']; window.setup(); 0
+type x
+snap typed x
+js const i = document.createElement('input'); i.id = 'tag'; document.body.appendChild(i); i.focus(); 0
+js window.addTag('work'); 0
+snap addTag, note ends in a list
+js window.addTag('home'); 0
+snap addTag home
+js ed.focus(); 0
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2

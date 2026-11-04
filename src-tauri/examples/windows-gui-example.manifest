@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Common Controls v6, for the GUI examples ONLY.
+
+  `tauri_build::build()` embeds a manifest into the app binary; cargo examples
+  get none, and a Tauri example is a full GUI process. `tao` imports
+  `TaskDialogIndirect`, `SetWindowSubclass`, `RemoveWindowSubclass` and
+  `DefSubclassProc` — all **v6** exports of comctl32. Without this dependency
+  the loader binds to System32's v5.82, which exports none of them, and the
+  process dies before `main` with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) and
+  no message of any kind.
+
+  Embedded by build.rs via `cargo:rustc-link-arg-examples`, which reaches
+  examples and nothing else — the shipped binary keeps the manifest
+  `tauri_build` gives it.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>
