@@ -1,0 +1,13 @@
+js window.INITIAL = '<div>intro</div><hr><div><br></div><div>plain</div>'; window.CARET = ['div:last-child','start']; window.setup(); 0
+key backspace
+snap Backspace, plain line below rule (native)
+type z
+snap typed z
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2

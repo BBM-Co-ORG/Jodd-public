@@ -1,0 +1,6 @@
+Backspace, rule above the  | <div>intro</div><hr><h2>Heading</h2>   caret="Heading"@0
+typed z                    | <div>intro</div><hr><h2>zHeading</h2>   caret="zHeading"@1
+cmd+z #1                   | <div>intro</div><hr><div><br></div><h2>Heading</h2>   caret=DIV@0
+cmd+z #2                   | <div>intro</div><hr><div><br></div><h2>Heading</h2>   caret=DIV@0
+redo #1                    | <div>intro</div><hr><h2>zHeading</h2>   caret="zHeading"@1
+redo #2                    | <div>intro</div><hr><h2>zHeading</h2>   caret="zHeading"@1

@@ -1,0 +1,140 @@
+[
+  {
+    "scope": "Notes/A",
+    "label": "Notes/A",
+    "exact": true,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/A",
+    "label": "Notes/A/x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/A",
+    "label": "Notes/AB",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes/A",
+    "label": "Notes/a/x",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes",
+    "label": "Notes/A",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes",
+    "label": "Notest",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "",
+    "label": "",
+    "exact": true,
+    "subtree": true
+  },
+  {
+    "scope": "",
+    "label": "/x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "",
+    "label": "Notes",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "/",
+    "label": "/x",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "/",
+    "label": "//x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/A/",
+    "label": "Notes/A/x",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes/A/",
+    "label": "Notes/A//x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/%",
+    "label": "Notes/A/x",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes/%",
+    "label": "Notes/%/x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/_",
+    "label": "Notes/A/x",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes/_",
+    "label": "Notes/_/x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/ไทย",
+    "label": "Notes/ไทย/子",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/é",
+    "label": "Notes/é",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes/é",
+    "label": "Notes/é/x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": "Notes/\\",
+    "label": "Notes/\\/x",
+    "exact": false,
+    "subtree": true
+  },
+  {
+    "scope": " Notes",
+    "label": "Notes",
+    "exact": false,
+    "subtree": false
+  },
+  {
+    "scope": "Notes/..",
+    "label": "Notes/../x",
+    "exact": false,
+    "subtree": true
+  }
+]
