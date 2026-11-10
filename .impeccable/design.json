@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T00:00:00Z",
+  "title": "Design System: Jodd",
+  "extensions": {
+    "colorMeta": {
+      "lamp-amber": {
+        "role": "primary",
+        "displayName": "Lamp Amber",
+        "canonical": "#c97c1f",
+        "tonalRamp": ["#3a2f12", "#3d2f18", "#8a4800", "#8f5310", "#c97c1f", "#d99a45", "#e8b571", "#f3e4c0"]
+      },
+      "amber-ink": { "role": "primary", "displayName": "Amber Ink", "canonical": "#8a4800" },
+      "amber-tint": { "role": "primary", "displayName": "Amber Tint", "canonical": "#f3e4c0" },
+      "lamp-mark": { "role": "primary", "displayName": "Lamp Mark", "canonical": "#9c5a0c" },
+      "focus-blue": { "role": "secondary", "displayName": "Focus Blue", "canonical": "#3d78bc" },
+      "tag-violet": { "role": "tertiary", "displayName": "Tag Violet", "canonical": "#7b4ea8" },
+      "paper-editor": {
+        "role": "neutral",
+        "displayName": "Editor Paper",
+        "canonical": "#fffef9",
+        "tonalRamp": ["#1a1714", "#26211c", "#463e35", "#595959", "#8c8c8c", "#ddd8cc", "#f0ebe0", "#fffef9"]
+      },
+      "paper-list": { "role": "neutral", "displayName": "List Paper", "canonical": "#faf6ed" },
+      "paper-sidebar": { "role": "neutral", "displayName": "Sidebar Paper", "canonical": "#f0ebe0" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#222222" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Pane titles, phone bar, note title field, Heading 1 in notes." },
+      "title": { "displayName": "Title", "purpose": "Settings page titles and empty-state headlines." },
+      "body-reading": { "displayName": "Body Reading", "purpose": "The note body: sustained reading at line height 1.7." },
+      "body": { "displayName": "Body", "purpose": "Default UI text: list rows, dialogs, inputs." },
+      "label": { "displayName": "Label", "purpose": "Buttons, secondary lines, metadata." },
+      "section-label": { "displayName": "Section Label", "purpose": "Uppercase group headers in sidebar and note list. Chrome only." },
+      "mono": { "displayName": "Mono", "purpose": "Code, parameters, shortcut keys." }
+    },
+    "shadows": [
+      { "name": "raised", "value": "0 1px 4px rgba(0,0,0,0.15)", "purpose": "Buttons that sit slightly proud." },
+      { "name": "card", "value": "0 2px 16px rgba(0,0,0,0.11)", "purpose": "Sign-in card and find bar." },
+      { "name": "menu", "value": "0 6px 24px rgba(0,0,0,0.16)", "purpose": "Menus and popovers." },
+      { "name": "menu-up", "value": "0 -6px 24px rgba(0,0,0,0.16)", "purpose": "Bottom-anchored panels." },
+      { "name": "modal", "value": "0 12px 40px rgba(0,0,0,0.25)", "purpose": "Dialogs, over the 35% scrim." }
+    ],
+    "motion": [
+      { "name": "dur-instant", "value": "100ms", "purpose": "A press or hover on a small control (menu rows)." },
+      { "name": "dur-fast", "value": "150ms", "purpose": "A colour, background or opacity change; nothing moves. Kept under reduced motion." },
+      { "name": "dur-move", "value": "220ms", "purpose": "Anything that changes position or size. 0 under prefers-reduced-motion." },
+      { "name": "dur-spin", "value": "900ms", "purpose": "One turn of a busy spinner; it stops under reduced motion and shows a still busy state." },
+      { "name": "dur-focal", "value": "700ms", "purpose": "The one authored moment: the lamp coming on behind the brand mark. It brightens always; it grows only with motion allowed." },
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Exponential ease-out for every transition: quick to answer, long to settle." }
+    ],
+    "breakpoints": [
+      { "name": "android-tablet", "value": "700px" },
+      { "name": "android-tablet-wide", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The default button: quiet, bordered, on panel white.",
+      "html": "<button class=\"ds-btn\">Cancel</button>",
+      "css": ".ds-btn { font-family: var(--font-sans); font-size: var(--size-sm); line-height: var(--leading); color: var(--text); background: var(--surface-panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-1) var(--space-3); cursor: pointer; transition: background var(--ease); } .ds-btn:hover { background: var(--surface-hover); } .ds-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one filled action per dialog, in Amber Ink, placed on the right.",
+      "html": "<button class=\"ds-btn-primary\">Save</button>",
+      "css": ".ds-btn-primary { font-family: var(--font-sans); font-size: var(--size-sm); line-height: var(--leading); color: var(--text-inverse); background: var(--accent-action); border: 1px solid var(--accent-action); border-radius: var(--radius); padding: var(--space-1) var(--space-3); cursor: pointer; transition: background var(--ease); } .ds-btn-primary:hover { background: var(--accent-hover); } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Bordered field with an explicit themed background and the shared blue focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Folder name\" />",
+      "css": ".ds-input { font-family: var(--font-sans); font-size: var(--size); line-height: var(--leading); color: var(--text); background: var(--surface-panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-1-5) var(--space-2); outline: none; width: 240px; } .ds-input:focus { box-shadow: var(--ring-focus); border-color: var(--focus); }"
+    },
+    {
+      "name": "Selected Chip",
+      "kind": "chip",
+      "refersTo": "chip-selected",
+      "description": "A selected filter or tag pill on Amber Tint.",
+      "html": "<span class=\"ds-chip\">#project</span>",
+      "css": ".ds-chip { display: inline-block; font-family: var(--font-sans); font-size: var(--size-sm); line-height: var(--leading); color: var(--accent-on-tint); background: var(--accent-tint); border-radius: var(--radius-sm); padding: 0 var(--space-1-5); }"
+    },
+    {
+      "name": "Note Row",
+      "kind": "custom",
+      "refersTo": "note-row",
+      "description": "The unit of the app: hover and the open row are neutral overlays; the open row adds the Lamp Mark rail, and multi-selected rows take a checkbox and the amber wash.",
+      "html": "<div class=\"ds-list\"><button class=\"ds-row\"><span class=\"ds-row-title\">Weekly plan</span><span class=\"ds-row-meta\">Today · Notes</span></button><button class=\"ds-row ds-row-active\"><span class=\"ds-row-title\">Reading list</span><span class=\"ds-row-meta\">Yesterday · Inbox</span></button><button class=\"ds-row ds-row-multi\"><span class=\"ds-row-check\"></span><span class=\"ds-row-title\">Meeting notes</span><span class=\"ds-row-meta\">Mon · Work</span></button></div>",
+      "css": ".ds-list { background: var(--surface-list); width: 280px; } .ds-row { display: block; width: 100%; text-align: left; background: none; border: none; padding: 10px var(--space-4); cursor: pointer; transition: background var(--ease); font-family: var(--font-sans); } .ds-row:hover { background: var(--surface-hover); } .ds-row { position: relative; } .ds-row-active { background: var(--surface-active); } .ds-row-active::before { content: \"\"; position: absolute; left: var(--space-1); top: var(--space-2); bottom: var(--space-2); width: 3px; border-radius: 2px; background: var(--accent-mark); } .ds-row-multi { background: var(--accent-wash); } .ds-row-check { float: left; width: 14px; height: 14px; margin: 2px var(--space-2) 0 0; border-radius: var(--radius-sm); background: var(--accent-action); } .ds-row-title { display: block; font-size: var(--size); font-weight: 600; color: var(--text); line-height: var(--leading); } .ds-row-meta { display: block; font-size: var(--size-sm); color: var(--text-muted); line-height: var(--leading); }"
+    },
+    {
+      "name": "Section Label",
+      "kind": "nav",
+      "description": "Uppercase group header used in the sidebar and note list.",
+      "html": "<div class=\"ds-section\">Folders</div>",
+      "css": ".ds-section { font-family: var(--font-sans); font-size: var(--size-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); line-height: var(--leading-tight); padding: var(--space-2) var(--space-3); background: var(--surface-sidebar); }"
+    },
+    {
+      "name": "Dialog Panel",
+      "kind": "card",
+      "refersTo": "dialog-panel",
+      "description": "Floating dialog: panel white, 10px corners, modal shadow, divided footer with the primary action on the right.",
+      "html": "<div class=\"ds-dialog\"><div class=\"ds-dialog-body\">Move 3 notes to Archive?</div><div class=\"ds-dialog-foot\"><button class=\"ds-dbtn\">Cancel</button><button class=\"ds-dbtn ds-dbtn-primary\">Move</button></div></div>",
+      "css": ".ds-dialog { width: 360px; background: var(--surface-panel); border-radius: var(--radius-lg); box-shadow: var(--shadow-modal); overflow: hidden; font-family: var(--font-sans); color: var(--text); } .ds-dialog-body { padding: var(--space-4); font-size: var(--size); line-height: var(--leading); } .ds-dialog-foot { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); } .ds-dbtn { font-size: var(--size-sm); padding: var(--space-1) var(--space-3); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-panel); color: var(--text); cursor: pointer; } .ds-dbtn:hover { background: var(--surface-hover); } .ds-dbtn-primary { background: var(--accent-action); border-color: var(--accent-action); color: var(--text-inverse); } .ds-dbtn-primary:hover { background: var(--accent-hover); }"
+    },
+    {
+      "name": "Brand Mark",
+      "kind": "logo",
+      "refersTo": "brand-mark",
+      "description": "The app's name in Thai, in Plex Sans Thai Bold at --size-mark in Amber Ink, over a pool of lamp light that comes on when the screen opens. Sign-in and About only; aria-hidden beside the English name.",
+      "html": "<span class=\"ds-mark\" aria-hidden=\"true\"><span class=\"ds-mark-glyphs\">จด</span></span>",
+      "css": ".ds-mark { position: relative; display: inline-block; isolation: isolate; } .ds-mark::before { content: ''; position: absolute; inset: calc(var(--size-mark) * -0.5) calc(var(--size-mark) * -0.75); z-index: -1; background: radial-gradient(closest-side, var(--lamp-glow), transparent); } .ds-mark-glyphs { display: block; font-family: var(--font-sans); font-size: var(--size-mark); font-weight: var(--weight-bold); line-height: var(--leading); color: var(--accent-action); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lamplit Desk",
+    "overview": "Jodd is a desk you work at all day. The paper is warm, never stark white, and it steps in tone from the sidebar (darkest) through the note list to the editor (lightest), so the place where you write is always the brightest thing on the desk. One amber lamp marks what is selected, active or actionable. Everything else, the tools, the chrome and the status, stays quiet in the warm neutrals until it is needed.\n\nThe feel is calm, dense and practical. Screens carry a lot at once (folders, a long note list, a full note, a format bar) at small, exact type sizes, and none of it is decoration. Calm comes from restraint, not emptiness: one accent hue, flat panes, shadows only on things that float, and colour that always means something. Precision is literal here. Every text colour was measured for WCAG contrast, including on top of hover and selection overlays, and the measurements are written next to the values in tokens.css.\n\nThai and Latin share the page as equals. One type superfamily sets both on the same baseline, and line heights never drop to where Thai tone marks clip.",
+    "keyCharacteristics": [
+      "Warm paper surfaces in three steps, lightest where you write.",
+      "One amber accent at two strengths: Lamp Amber for fills, Amber Ink for text.",
+      "Blue appears only as the keyboard focus ring.",
+      "IBM Plex Sans Thai and IBM Plex Mono, seven sizes from 11 to 28px.",
+      "Flat panes; shadows only on menus, popovers, cards and dialogs.",
+      "A full dark theme with the same structure, following the OS unless overridden."
+    ],
+    "rules": [
+      { "name": "The Two Ambers Rule", "body": "Lamp Amber never carries text. Anything that is text or has text on it uses Amber Ink. Collapsing the two ships a contrast failure that looks like a tidy-up.", "section": "colors" },
+      { "name": "The Blue Means Focus Rule", "body": "Blue is reserved for the keyboard focus ring. A blue button, link or badge breaks the one signal a keyboard user relies on.", "section": "colors" },
+      { "name": "The Overlaid Contrast Rule", "body": "Measure contrast on the composited result, not on the bare surface: muted text on a selected sidebar row is three layers deep, and that is where failures hide. Badges are opaque (--surface-badge) for this reason.", "section": "colors" },
+      { "name": "The Meaningful Colour Rule", "body": "Icons stay currentColor unless colour carries meaning: delete is danger, pin is Amber Ink, tag is Tag Violet. Colouring every icon removes colour's ability to mean anything.", "section": "colors" },
+      { "name": "The Touched Amber Rule", "body": "In the editor, amber as a state has one job: another device or an agent touched this note. The \"Edited on another device\" notice and the trust chip (\"Changed elsewhere\", \"<agent> · 2h ago\") share it on every breakpoint: a Lamp Amber wash, with Amber Ink on the chip (6.23:1 light, 7.60:1 dark; 5.60:1 and 6.18:1 hovered) and body ink on the notice. Each is said once: no toolbar or header copy of the notice. No other state borrows amber (a draft is muted), and red (--danger) is for failures only: a push the backend refused, an action that failed. Links, selection, find matches and the primary action keep amber's app-wide roles; this rule is about states. Guarded by src/lib/editorStatusColour.test.ts.", "section": "colors" },
+      { "name": "The One Voice Rule", "body": "Every state a note in the editor can be in is said in one place, its actions live there, and only states that need the user are announced. The save word is routine progress, never a live region, and keeps its fixed width. A notice above the title carries a state that needs the user (edited elsewhere, conflict copy, refused push, read-only), is announced, holds the caret line still and wraps its buttons in a narrow editor. The metadata chip carries states that do not interrupt (unreviewed agent change, refused pin), never one a notice says. A refusal is told in plain words with the next step; the backend's own text sits behind Details; its notice offers only the buttons that can work for that refusal (Move to Notes for a refused folder, never a copy into it). A locked note says first that the last edit is on this device only, and offers a copy. A notice's promise matches the code exactly. A notice does not blink: a refused push's notice stays up word for word while the user types, and only an asked-for retry (Try again, Move to Notes) changes its lead, never to a longer one. The autosave waits while the user reads a new notice (up to 10s, until they type) or answers \"Use other version\"; \"See the other version\" shows the other text first; an action returns focus to the text at the caret's line and column; one always-present live region announces notices by their lead. The table is src/lib/editor/editorStatus.ts, checked by src/lib/editorStatus.test.ts.", "section": "components" },
+      { "name": "The Thai Floor Rule", "body": "Anywhere user text can land, line height is at least 1.5. 1.7 is for the editor body. 1.35 is allowed only for chrome that never shows user text. At line height 1, Thai tone marks clip.", "section": "typography" },
+      { "name": "The Seven Sizes Rule", "body": "Font sizes come from the seven size tokens (11, 12, 13, 14, 16, 22 and 28px), never a literal px value. Nothing goes below 11px: Thai vowel marks lose legibility faster than Latin descenders. --size-mark (56px) is not an eighth size: it belongs to the brand mark alone.", "section": "typography" },
+      { "name": "The Brand Mark Rule", "body": "The Thai mark is the one piece of Thai in the interface and the one exception to English-only copy, because it is a mark, not copy. It lives in BrandMark.svelte only, appears on the sign-in screen and in About only, is aria-hidden beside the English name, and never becomes a label, button, heading or loading state. Guarded by src/lib/brandMark.test.ts.", "section": "components" },
+      { "name": "The One Lamp Moment Rule", "body": "The app has one authored motion: the lamp coming on (--dur-focal, 700ms). The glow behind the brand mark brightens and grows (only brightens under reduced motion), and the arrival line after a first sign-in arrives in Amber Tint and settles to paper. Nothing else gets an entrance: a new authored moment replaces this one or is not added.", "section": "components" },
+      { "name": "The Loaded Weights Rule", "body": "Use 400, 600 and 700, the weights the app bundles for both Latin and Thai. Any other weight is not a face the app ships: a 500 quietly renders as 400. A weight bundled for one script only is worse: the font files carry no unicode-range, so Thai text at that weight falls back to the OS's own Thai font, a different face on Mac, Windows and Android. Add a weight for both scripts or not at all; a design guard checks the pair. Components name a weight by its token (--weight-regular, --weight-semibold, --weight-bold), never a number or keyword, in font-weight or the font shorthand.", "section": "typography" },
+      { "name": "The Floating-Only Shadow Rule", "body": "If it does not float, it has no shadow. Panes, list rows and inline panels separate by tone and border.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do take every colour, size, radius and space from tokens.css variables.",
+      "Do use Amber Ink for anything that is text or carries text, and Lamp Amber only for fills, tints, rails and borders.",
+      "Do keep user text at line height 1.5 or more (1.7 in the editor body).",
+      "Do give every icon-only button an accessible name.",
+      "Do give every input, select and textarea an explicit themed background.",
+      "Do style note-body content at display time, through the scoped .editor-body rules.",
+      "Do edit dark values in the prefers-color-scheme: dark block and regenerate the data-theme blocks; never hand-edit the generated ones.",
+      "Do honour reduced motion: continuous spinners have a still busy state."
+    ],
+    "donts": [
+      "Don't put text on Lamp Amber, or use blue for anything but focus.",
+      "Don't write raw rgba() colours in components; the --accent-*, --danger-* and surface tokens exist for that.",
+      "Don't set a literal px font size or an ad-hoc monospace stack.",
+      "Don't use emoji or control glyphs as icons in UI chrome.",
+      "Don't put Thai in UI copy: the interface is English-only. Note content can be any language. The brand mark is the one exception, and it is a mark, not copy (The Brand Mark Rule).",
+      "Don't rewrite or strip inline styles in a note's saved HTML to make it look right. That HTML round-trips to Apple Notes.",
+      "Don't add a shadow to anything that does not float.",
+      "Don't merge graph colours with theme colours. Two relation types would become indistinguishable."
+    ]
+  }
+}

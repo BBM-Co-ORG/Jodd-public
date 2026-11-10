@@ -1,0 +1,8 @@
+formatTask on 2nd <br> lin | <div>one<br><input type="checkbox" contenteditable="false">&nbsp;two</div>   caret=" two"@1
+typed t                    | <div>one<br><input type="checkbox" contenteditable="false">&nbsp;ttwo</div>   caret=" ttwo"@2
+cmd+z #1                   | <div>one<br><input type="checkbox" contenteditable="false">&nbsp;two</div>   caret=" two"@1
+cmd+z #2                   | <div>one<br>two</div>   caret="two"@0
+cmd+z #3                   | <div>one<br>two</div>   caret="two"@0
+redo #1                    | <div>one<br><input type="checkbox" contenteditable="false">&nbsp;two</div>   caret=" two"@1
+redo #2                    | <div>one<br><input type="checkbox" contenteditable="false">&nbsp;ttwo</div>   caret=" ttwo"@2
+redo #3                    | <div>one<br><input type="checkbox" contenteditable="false">&nbsp;ttwo</div>   caret=" ttwo"@2
