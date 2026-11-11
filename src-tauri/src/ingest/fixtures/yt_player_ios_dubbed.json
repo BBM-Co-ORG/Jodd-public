@@ -1,0 +1,759 @@
+{
+  "playabilityStatus": {
+    "status": "OK"
+  },
+  "videoDetails": {
+    "videoId": "J9NQTYUP6k0",
+    "title": "How the Top 1% Use Claude Code Differently",
+    "shortDescription": "🚀Join the Agentic Academy: https://skool.com/scrapes\n👀 Get customers from ChatGPT: https://dub.sh/rankspot-yt\nDon't miss the next build - https://www.youtube.com/@simonscrapes?sub_confirmation=1\n\nThe way the top 1% use Claude Code has completely changed in the last year. Forget \"plan mode\", \"think h"
+  },
+  "captions": {
+    "playerCaptionsTracklistRenderer": {
+      "captionTracks": [
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=bn&redacted=1",
+          "languageCode": "bn",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Bangla (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=nl&redacted=1",
+          "languageCode": "nl",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Dutch (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=en&redacted=1",
+          "languageCode": "en",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "English (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=fr&redacted=1",
+          "languageCode": "fr",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "French (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=de&redacted=1",
+          "languageCode": "de",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "German (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=iw&redacted=1",
+          "languageCode": "iw",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Hebrew (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=hi&redacted=1",
+          "languageCode": "hi",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Hindi (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=id&redacted=1",
+          "languageCode": "id",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Indonesian (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=it&redacted=1",
+          "languageCode": "it",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Italian (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=ja&redacted=1",
+          "languageCode": "ja",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Japanese (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=ko&redacted=1",
+          "languageCode": "ko",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Korean (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=ml&redacted=1",
+          "languageCode": "ml",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Malayalam (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=pl&redacted=1",
+          "languageCode": "pl",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Polish (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=pt&redacted=1",
+          "languageCode": "pt",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Portuguese (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=pa&redacted=1",
+          "languageCode": "pa",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Punjabi (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=ru&redacted=1",
+          "languageCode": "ru",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Russian (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=es&redacted=1",
+          "languageCode": "es",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Spanish (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=ta&redacted=1",
+          "languageCode": "ta",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Tamil (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=te&redacted=1",
+          "languageCode": "te",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Telugu (auto-generated)"
+              }
+            ]
+          }
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=J9NQTYUP6k0&lang=uk&redacted=1",
+          "languageCode": "uk",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Ukrainian (auto-generated)"
+              }
+            ]
+          }
+        }
+      ],
+      "audioTracks": [
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "ja.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "fr-FR.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "es-US.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "hi.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "id.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "ru.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "en-US.4"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "nl-NL.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "ml.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "ta.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "iw.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "de-DE.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "bn.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "it.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "ko.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "pt-BR.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "pl.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "te.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "pa.10"
+        },
+        {
+          "captionTrackIndices": [
+            2,
+            0,
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "audioTrackId": "uk.10"
+        }
+      ],
+      "defaultAudioTrackIndex": 6
+    }
+  }
+}
