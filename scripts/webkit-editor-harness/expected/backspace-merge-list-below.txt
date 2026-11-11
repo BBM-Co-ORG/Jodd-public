@@ -1,0 +1,8 @@
+Backspace, ul below empty  | <div>above</div><ul><li>item</li></ul>   caret=UL@0
+typed z                    | <div>above</div><ul><li>zitem</li></ul>   caret="zitem"@1
+cmd+z #1                   | <div>above</div><ul><li>item</li></ul>   caret=UL@0
+cmd+z #2                   | <div>above</div><div><br></div><ul><li>item</li></ul>   caret=DIV@1
+cmd+z #3                   | <div>above</div><div><br></div><ul><li>item</li></ul>   caret=DIV@1
+redo #1                    | <div>above</div><ul><li>item</li></ul>   caret="above"@5
+redo #2                    | <div>above</div><ul><li>zitem</li></ul>   caret="zitem"@1
+redo #3                    | <div>above</div><ul><li>zitem</li></ul>   caret="zitem"@1

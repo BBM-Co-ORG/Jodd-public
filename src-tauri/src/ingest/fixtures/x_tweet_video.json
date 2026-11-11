@@ -1,0 +1,41 @@
+{
+  "text": "I truly don't understand why nobody is using this setup\n\ngraphify, a tool that turns any folder into a knowledge graph your agent can query, just passed 126k stars on github and got into Y Combinator. people stopped asking ai questions. they're giving it a desk, a memory and a https://t.co/8QpaMM6j2s",
+  "user": {
+    "name": "kiosa",
+    "screen_name": "thegreatest_sv"
+  },
+  "mediaDetails": [
+    {
+      "type": "video",
+      "video_info": {
+        "duration_millis": 30000,
+        "variants": [
+          {
+            "content_type": "application/x-mpegURL",
+            "url": "https://video.twimg.com/amplify_video/2111032402583646208/pl/dY3LpwkLGDwzqWHB.m3u8?redacted=1"
+          },
+          {
+            "bitrate": 632000,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/amplify_video/2111032402583646208/vid/avc1/320x400/z_lwNqdcuK_lasDo.mp4"
+          },
+          {
+            "bitrate": 950000,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/amplify_video/2111032402583646208/vid/avc1/480x600/g_hRzroLndk9WAEA.mp4"
+          },
+          {
+            "bitrate": 2176000,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/amplify_video/2111032402583646208/vid/avc1/720x900/hP-I6SLCIDqbazJh.mp4"
+          },
+          {
+            "bitrate": 10368000,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/amplify_video/2111032402583646208/vid/avc1/1080x1350/8jNy3pAGmY-c4R7i.mp4"
+          }
+        ]
+      }
+    }
+  ]
+}

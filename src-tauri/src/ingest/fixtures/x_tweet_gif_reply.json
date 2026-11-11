@@ -1,0 +1,57 @@
+{
+  "text": "🎮 Build complete projects from scratch\n\nDeepSeek-V4.1-Flash-1017 uses reinforcement learning with self-feedback to improve end-to-end project development—from game creation to 3D modeling.\n\nSee it in action 👇\n\n2/4 https://t.co/Y5t4oGwq1x",
+  "user": {
+    "name": "DeepSeek",
+    "screen_name": "deepseek_ai"
+  },
+  "mediaDetails": [
+    {
+      "type": "animated_gif",
+      "video_info": {
+        "variants": [
+          {
+            "bitrate": 0,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/tweet_video/HU0b9EFawAA1w0R.mp4"
+          }
+        ]
+      }
+    },
+    {
+      "type": "animated_gif",
+      "video_info": {
+        "variants": [
+          {
+            "bitrate": 0,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/tweet_video/HU0b9qGaUAE7J3j.mp4"
+          }
+        ]
+      }
+    },
+    {
+      "type": "animated_gif",
+      "video_info": {
+        "variants": [
+          {
+            "bitrate": 0,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/tweet_video/HU0b-TxboAA9W_E.mp4"
+          }
+        ]
+      }
+    },
+    {
+      "type": "animated_gif",
+      "video_info": {
+        "variants": [
+          {
+            "bitrate": 0,
+            "content_type": "video/mp4",
+            "url": "https://video.twimg.com/tweet_video/HU0b-84bAAAloEF.mp4"
+          }
+        ]
+      }
+    }
+  ]
+}
