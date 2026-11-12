@@ -1,0 +1,28 @@
+{
+  "playabilityStatus": {
+    "status": "OK"
+  },
+  "videoDetails": {
+    "videoId": "ve4f7oz-UPs",
+    "title": "เปิดรังพญาเม่า เล่าชีวิตปั้น1เป็นหลักร้อยล้าน l เอ พิสุทธิ์ สันติโชค EP.1",
+    "shortDescription": "อยากเรียนกับคุณ เอ พิสุทธิ์ สันติโชค\nสอบถามหลักสูตรของ A-Pisut Academy\nแอดไลน์ @a-pisut \nหรือคลิ๊กลิงค์นี้ครับ\nhttps://lin.ee/J3b5xOW"
+  },
+  "captions": {
+    "playerCaptionsTracklistRenderer": {
+      "captionTracks": [
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=ve4f7oz-UPs&lang=th&redacted=1",
+          "languageCode": "th",
+          "kind": "asr",
+          "name": {
+            "runs": [
+              {
+                "text": "Thai (auto-generated)"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

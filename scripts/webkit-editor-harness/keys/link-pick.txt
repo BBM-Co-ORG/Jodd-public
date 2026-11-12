@@ -1,0 +1,19 @@
+js window.INITIAL = '<div>see </div>'; window.CARET = ['div','end']; window.setup(); 0
+type [[que
+snap typed [[que
+js window.pickLink('que', 'quarterly-plan'); 0
+snap pickLink
+type !
+snap typed !
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key cmd+z
+snap cmd+z #3
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
+key shift+cmd+z
+snap redo #3

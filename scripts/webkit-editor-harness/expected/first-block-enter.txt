@@ -1,0 +1,8 @@
+Enter at first-block start | <h2><br></h2><h2>Heading</h2><div>below</div>   caret="Heading"@0
+typed z                    | <h2><br></h2><h2>zHeading</h2><div>below</div>   caret="zHeading"@1
+cmd+z #1                   | <h2>Heading</h2><div>below</div>   caret=H2@0
+cmd+z #2                   | <h2>Heading</h2><div>below</div>   caret=H2@0
+cmd+z #3                   | <h2>Heading</h2><div>below</div>   caret=H2@0
+redo #1                    | <h2><br></h2><h2>zHeading</h2><div>below</div>   caret="zHeading"@1
+redo #2                    | <h2><br></h2><h2>zHeading</h2><div>below</div>   caret="zHeading"@1
+redo #3                    | <h2><br></h2><h2>zHeading</h2><div>below</div>   caret="zHeading"@1
