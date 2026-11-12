@@ -1,0 +1,89 @@
+syntax = "proto2";
+
+package topotext;
+
+message String {
+  required string string = 2;
+  repeated topotext.Substring substring = 3;
+  optional topotext.VectorTimestamp timestamp = 4;
+  repeated topotext.AttributeRun attributeRun = 5;
+}
+
+message CharID {
+  required uint32 replicaID = 1;
+  required uint32 clock = 2;
+}
+
+message Substring {
+  required topotext.CharID charID = 1;
+  required uint32 length = 2;
+  required topotext.CharID timestamp = 3;
+  optional uint32 tombstone = 4;
+  repeated uint32 child = 5;
+}
+
+message VectorTimestamp {
+  message Clock {
+    message ReplicaClock {
+      required uint32 clock = 1;
+      optional uint32 subclock = 2;
+    }
+    required bytes replicaUUID = 1;
+    repeated topotext.VectorTimestamp.Clock.ReplicaClock replicaClock = 2;
+  }
+  repeated topotext.VectorTimestamp.Clock clock = 1;
+}
+
+message Color {
+  required float red = 1;
+  required float green = 2;
+  required float blue = 3;
+  required float alpha = 4;
+}
+
+message AttachmentInfo {
+  optional string attachmentIdentifier = 1;
+  optional string typeUTI = 2;
+  optional string systemAttachmentClassName = 3;
+  optional bytes systemAttachmentData = 4;
+}
+
+message Font {
+  optional string name = 1;
+  optional float pointSize = 2;
+  optional uint32 fontHints = 3;
+}
+
+message Todo {
+  required bytes todoUUID = 1;
+  required uint32 done = 2;
+}
+
+message ParagraphStyle {
+  optional uint32 style = 1;
+  optional uint32 alignment = 2;
+  optional uint32 writingDirection = 3;
+  optional int32 indent = 4;
+  optional topotext.Todo todo = 5;
+  optional uint32 paragraphHints = 6;
+  optional uint32 startingListItemNumber = 7;
+  optional uint32 blockQuoteLevel = 8;
+  optional bytes uuid = 9;
+}
+
+message AttributeRun {
+  required uint32 length = 1;
+  optional topotext.ParagraphStyle paragraphStyle = 2;
+  optional topotext.Font font = 3;
+  optional uint32 fontHints = 5;
+  optional uint32 underline = 6;
+  optional uint32 strikethrough = 7;
+  optional int32 superscript = 8;
+  optional string link = 9;
+  optional topotext.Color color = 10;
+  optional uint32 writingDirection = 11;
+  optional topotext.AttachmentInfo attachmentInfo = 12;
+  optional uint64 timestamp = 13;
+  optional uint32 emphasis = 14;
+  optional topotext.AttachmentInfo systemAttachmentInfo = 15;
+}

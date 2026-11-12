@@ -1,0 +1,1 @@
+insertHTML spaces          | <div>base a  b	 c &nbsp;&nbsp;</div>   caret="base a  b\t c   "@15
