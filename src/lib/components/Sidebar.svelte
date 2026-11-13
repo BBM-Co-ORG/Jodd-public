@@ -1,0 +1,3469 @@
+<script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
+  import { notes, selectedFolder, selectedNote, accounts, activeAccounts, currentAccount, refreshNotes, noteIndex, folderRefreshSignal, hydratedFolders, indexRewriteOnFolderRename, notesRewriteOnFolderRename, restoreOpenNoteFolder, selectedTags, tagMatchMode, tagScope, clearSelectedTags, tagsByAccount, accountDisplay, backendLabel, selectedSmartFolder, navigateToFolder, viewSnapshot, viewUnchanged, capabilitiesByAccount, setAccountCapabilities, shouldShowTrash, canWrite, error, type BackendCapabilities, type SmartFolderKind } from '../stores/notes';
+  import { navRows } from '../navRows';
+  import { menuKeys } from '../menuKeys';
+  import { partitionAccounts } from '../stores/accountStatus';
+  import { accountNoteTotal, folderCounts } from '../folderCounts';
+  import { isAndroid, supportsIcloud } from '../stores/platform';
+  import { navigateToPane, type Pane } from '../stores/phoneNav';
+  import { androidLayoutMode } from '../stores/viewport';
+  import { displayTitle } from '../textDisplay';
+  import { longpress } from '../longpress';
+  import type { Account } from '../types';
+  import DupReviewModal from './DupReviewModal.svelte';
+  import CurateReview from './CurateReview.svelte';
+  import { extractModalOpen, aboutModalOpen, settingsRoute, localFolderBusy, openAskWith } from '../stores/ui';
+  import { hiddenFromAi, aiHiddenFor } from '../stores/aiScope';
+  import { aiGate } from '../controllers/aiActions';
+  import type { AskScope } from './askScope';
+  import { dupStats, scheduleDupStatsRefresh } from '../stores/dupStats';
+  import { onMount, onDestroy, createEventDispatcher, tick } from 'svelte';
+  import { getVersion } from '@tauri-apps/api/app';
+  import { get } from 'svelte/store';
+  import Icon from './Icon.svelte';
+  import { studioRequest } from '../studio';
+  import { skillRequest } from '../agentSkills';
+  import { SMART_FOLDER_NAMES, viewName } from '../viewName';
+  import { failureText, plural } from '../errorText';
+  import { SMART_FOLDER_ROWS, SMART_FOLDER_KINDS } from '../smartFolders';
+    import PromptDialogs from './PromptDialogs.svelte';
+  import Modal from './Modal.svelte';
+  import Popover from './Popover.svelte';
+  import AiMenu from './AiMenu.svelte';
+  import {
+    removeAccount as removeAccountAction, setAccountActive, accountStatusChangeSeq,
+    startAddAccount, totalPending, type PendingPushes, type AddAccountKind,
+    stopWaiting as stopWaitingAction, STOP_WAITING_FAILED,
+  } from '../controllers/accountActions';
+  import { type FolderRow, compareFolderPaths, isRowVisible, rowHasChildren, stripWorkflowMarkers, isAgentFolder, isProtectedAgentFolder } from './sidebar/folderTree';
+  import { syncBlocks, refreshSyncBlocks, folderBlockReason, forgetFolderBlocks } from '../syncBlocks';
+  import { renameTag as renameTagAction, deleteTag as deleteTagAction } from '../controllers/tagActions';
+  import type { ConfirmOptions } from '../controllers/confirmGate';
+  import {
+    selectFolder as selectFolderView, toggleTag as toggleTagView,
+    selectSmartFolder as selectSmartFolderView, openNewNote,
+  } from '../controllers/viewSelection';
+  import PhoneFolders from './sidebar/PhoneFolders.svelte';
+  import ScopePicker from './sidebar/ScopePicker.svelte';
+  import { byUse, unionTags } from '../tagOrder';
+  import { scope, ALL_ACCOUNTS } from '../stores/sidebarScope';
+  import { loadViewsOpen, saveViewsOpen, loadTagsOpen, saveTagsOpen, loadCollapsedAccounts, toggleCollapsedAccount } from '../sidebarFolds';
+  import { accountDotState, accountHeaderMark, type AccountDot } from '../accountDot';
+  import { isSignedOut, reconnectKind } from '../controllers/authLoss';
+  import { accountNameBesideBackend, accountNameWithBackend, currentListTitle } from '../stores/listView';
+
+  // `count_pending_pushes`' shape and its two totals live with the account
+  // actions (controllers/accountActions.ts): the Inactive-group poll below
+  // and the remove-account confirmation must sum the same fields.
+
+  // Width is owned by App.svelte so the user can drag a resizer between panes.
+  // Default keeps the original 200px look if the parent doesn't pass one.
+  export let width: number = 200;
+  // Set by TabletChrome: the Sidebar sits under (drawer) or beside (column)
+  // the tablet top bar. Its header then takes the bar's padding and height,
+  // so "JODD" lines up with "☰ <view>" (Galaxy Tab S7, 2026-10-21: it sat
+  // higher), and the persistent column drops ‹ — ☰ already toggles it. The
+  // drawer keeps ‹: there ☰ is under the scrim.
+  export let tabletFrame: 'column' | 'drawer' | null = null;
+  // `pick`: the user picked a view here (a folder, a tag, a Smart Folder, an
+  // account's Notes). The tablet drawer closes on it (spec §5.4) — an event,
+  // not a store diff, so re-picking the view already shown closes it too.
+  const dispatch = createEventDispatcher<{ collapse: void; pick: void }>();
+
+  // Per-path expand state for the folder tree. Defaults to expanded for the
+  // implicit "Notes" root of every account so a fresh session still shows
+  // top-level folders without the user having to twist them open. Other
+  // sub-folders start collapsed (file-explorer convention).
+  let expandedPaths: Record<string, boolean> = {};
+
+  // Guards the one-time Notes-root auto-expand below. A plain boolean, not
+  // `!expandedPaths['Notes']` — that check couldn't tell "never touched" apart
+  // from "user just collapsed it" (both falsy), so the effect kept re-forcing
+  // Notes back open on every $activeAccounts change, including the one caused
+  // by the collapse click itself re-running this same reactive block.
+  let hasAutoExpandedNotesRoot = false;
+
+  // Last $selectedFolder the ancestor-auto-expand block below has already
+  // processed — see that block's comment for why this gate is needed.
+  let lastAutoExpandedSelection: string | null = null;
+
+  function toggleExpand(e: MouseEvent | KeyboardEvent, path: string) {
+    e.stopPropagation();
+    expandedPaths = { ...expandedPaths, [path]: !expandedPaths[path] };
+  }
+
+
+  // FolderRow, isRowVisible, rowHasChildren, stripWorkflowMarkers: sidebar/folderTree.ts.
+
+  // Per-account folder cache. Each account's "Notes/..." labels — including
+  // empty ones the user just created — live here. Keyed by accountId.
+  // Apple Notes uses the same model: each account section has its own tree.
+  let foldersByAccount: Record<string, string[]> = {};
+
+  // Per-account path → kind map ('user' | 'system_workflow' | 'smart_query').
+  // Populated alongside foldersByAccount via list_folder_kinds (Task 16).
+  // Paths missing from the map default to 'user' at the render site — most
+  // notably the implicit "Notes" root, which has no cache row until first sync.
+  let folderKindsByAccount: Record<string, Record<string, string>> = {};
+
+  // Latest-call-wins sequence number. Multiple refreshFolders can be in
+  // flight at once — the reactive `$: if ($activeAccounts...)` fires whenever
+  // accounts change, and post-add flows bump $folderRefreshSignal too.
+  // Without this counter, an in-flight call started with the OLD account
+  // list could finish AFTER one that saw the NEW list and silently
+  // overwrite the new account's folders with undefined.
+  let refreshFoldersSeq = 0;
+  async function refreshFolders() {
+    const seq = ++refreshFoldersSeq;
+    // Active only — matching the `$: if ($activeAccounts.length > 0)` trigger
+    // below AND the `{#each $activeAccounts}` that renders the tree. Reading
+    // the full list here meant a dismissed account still cost two invokes per
+    // refresh for folders nothing renders.
+    const list = get(activeAccounts);
+    if (list.length === 0) {
+      foldersByAccount = {};
+      return;
+    }
+    // Same cadence as the folder tree: blocked pins/folders (gotcha #14) are
+    // a pure SQLite read, and the worker's remote-changed after a block
+    // reaches here through folderRefreshSignal (gotcha #6).
+    void refreshSyncBlocks(list.map((a) => a.id));
+    try {
+      const results = await Promise.allSettled(
+        list.map((a) =>
+          Promise.all([
+            invoke<string[]>('list_folders', { accountId: a.id }),
+            invoke<[string, string][]>('list_folder_kinds', { accountId: a.id })
+              .catch(() => [] as [string, string][]),
+          ]).then(([folders, kinds]) => [a.id, folders, kinds] as const),
+        ),
+      );
+      // If a newer refreshFolders started while we were awaiting, drop our
+      // result and let the newer one own foldersByAccount.
+      if (seq !== refreshFoldersSeq) {
+        console.log(`[jodd] refreshFolders: dropping stale seq=${seq}`);
+        return;
+      }
+      const next: Record<string, string[]> = {};
+      const nextKinds: Record<string, Record<string, string>> = {};
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          const [id, folders, kinds] = r.value;
+          next[id] = folders;
+          const kmap: Record<string, string> = {};
+          for (const [p, k] of kinds) kmap[p] = k;
+          nextKinds[id] = kmap;
+          console.log(`[jodd] refreshFolders: ${id} → ${folders.length} folders`);
+        } else {
+          // Surface rejections — a silent failure here was leaving the new
+          // account's folders blank in the sidebar.
+          console.error(`[jodd] refreshFolders REJECTED for ${list[i].id}:`, r.reason);
+        }
+      });
+      foldersByAccount = next;
+      folderKindsByAccount = nextKinds;
+    } catch (e) {
+      console.error('refreshFolders failed', e);
+    }
+  }
+
+  // Refresh on mount, whenever the account list changes, AND whenever the note
+  // index lands. The index arrives a moment after mount on cold start (via
+  // index_account), and that same backend pass now reconciles the folders
+  // cache — so re-reading list_folders here is what surfaces empty folders
+  // (e.g. `Notes/play2`) that have no notes to infer their path from.
+  // refreshFolders is a cheap pure-SQLite read with its own in-flight guard,
+  // so firing it a few extra times during cold start is harmless.
+  //
+  // $folderRefreshSignal is the fourth trigger, and the only one that covers a
+  // change touching ONLY the `folders` table — a folder created by jodd-mcp
+  // writing straight to SQLite, or by the sync worker draining a dirty_new
+  // row. $noteIndex cannot see those: it moves on cold start and on this
+  // instance's own note saves, so a folder-only change stayed invisible until
+  // restart. App.svelte fires the signal from scheduleRefresh(), the one
+  // chokepoint every refresh path funnels through — poll, focus settle,
+  // folder settle and the manual button alike.
+  $: if ($activeAccounts.length > 0) {
+    void $noteIndex;
+    void $folderRefreshSignal;
+    refreshFolders();
+  }
+
+  // Auto-expand the implicit "Notes" root once we know the account list, so a
+  // fresh app launch shows the top-level tree without the user clicking ▸.
+  // Fires exactly once — after that, user toggles are left alone.
+  $: if ($activeAccounts.length > 0 && !hasAutoExpandedNotesRoot) {
+    hasAutoExpandedNotesRoot = true;
+    expandedPaths = { ...expandedPaths, Notes: true };
+  }
+
+  // Whenever selectedFolder points at a sub-path, auto-expand every ancestor
+  // along the way. Without this, navigating to a deep folder (via folder
+  // create, programmatic set, restoration, etc.) leaves the row rendered
+  // but hidden under collapsed parents — looks like a deletion bug.
+  //
+  // Gated on an actual CHANGE of $selectedFolder (`lastAutoExpandedSelection`),
+  // not merely on this block re-running — the block also reads `expandedPaths`,
+  // so without the gate a manual collapse of an ancestor (itself an
+  // `expandedPaths` write) would re-trigger this same block and immediately
+  // force that ancestor back open, exactly like the Notes-root bug above.
+  $: if ($selectedFolder !== lastAutoExpandedSelection) {
+    const path = $selectedFolder;
+    lastAutoExpandedSelection = path;
+    if (path && path !== '__ALL__' && path.includes('/')) {
+      const segs = path.split('/');
+      let needsUpdate = false;
+      const updates: Record<string, boolean> = {};
+      for (let i = 1; i < segs.length; i++) {
+        const ancestor = segs.slice(0, i).join('/');
+        if (!expandedPaths[ancestor]) {
+          updates[ancestor] = true;
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) expandedPaths = { ...expandedPaths, ...updates };
+    }
+  }
+
+  // Per-account folder counts, and which folders the notes put in the tree:
+  // live $notes for a hydrated folder, the server-side index otherwise.
+  // See `folderCounts`.
+  $: folderCountsByAccount = folderCounts($notes, $noteIndex, $hydratedFolders);
+  // Every note per account: desktop's "All <account>" row and the phone's
+  // account label (PhoneFolders) show this same number.
+  $: accountTotals = Object.fromEntries(
+    $activeAccounts.map((a) => [a.id, accountNoteTotal(folderCountsByAccount[a.id])]),
+  ) as Record<string, number>;
+
+  // The current account: the one the footer chip names, and the one + and
+  // New note act on — the account of the last thing picked, or the first
+  // active account before anything is picked.
+  $: currentAcct = $activeAccounts.find((a) => a.id === $currentAccount) ?? $activeAccounts[0];
+  // The account the workspace's Views and Tags show (spec 2026-11-12 §3):
+  // the "For ⌄" picker's choice, else the current account.
+  // Under All accounts (spec 2026-11-13) there is no one account: Views read
+  // every active account and Tags show their union.
+  $: scopeAll = $scope?.kind === 'all';
+  $: scopeAcct = scopeAll ? undefined : ($activeAccounts.find((a) => $scope?.kind === 'account' && a.id === $scope.accountId) ?? currentAcct);
+  /** The account a Views or Tags pick acts on: one id, or null for all. */
+  $: viewAccountId = scopeAll ? null : (scopeAcct?.id ?? null);
+  // Most-used first (tagOrder.ts): the tags in use lead a long cloud.
+  $: scopeTags = scopeAll
+    ? byUse(unionTags($activeAccounts.map((a) => $tagsByAccount.get(a.id) ?? [])))
+    : scopeAcct ? byUse($tagsByAccount.get(scopeAcct.id) ?? []) : [];
+  // A tag reads as picked only in the account whose list it filters: the
+  // same tag name in the scoped account is a different tag.
+  $: scopeIsCurrent = !!scopeAcct && scopeAcct.id === $currentAccount;
+  // Whether the tag filter on screen is this cloud's: the same scope, and
+  // for one account, that account. A pill reads as picked only then.
+  $: cloudOwnsFilter = scopeAll ? $tagScope === 'all' : scopeIsCurrent;
+  // The Tags filter (spec 2026-11-12 §4): a case-insensitive substring, so
+  // Thai tags match on any part, as search does. Cleared on a scope change.
+  let tagFilter = '';
+  let tagFilterFor: string | undefined;
+  $: if ((viewAccountId ?? ALL_ACCOUNTS) !== tagFilterFor) { tagFilterFor = viewAccountId ?? ALL_ACCOUNTS; tagFilter = ''; }
+  $: shownTags = tagFilter.trim()
+    ? scopeTags.filter((t) => t.tag.toLowerCase().includes(tagFilter.trim().toLowerCase()))
+    : scopeTags;
+  // The filter field shows once a cloud is long enough to hunt in.
+  const TAG_FILTER_FROM = 20;
+  $: chipName = currentAcct ? accountNameBesideBackend(currentAcct, $activeAccounts) : '';
+
+  // Build the folder tree for ONE account from:
+  //   1) labels of that account's notes (folderCountsByAccount)
+  //   2) any "Notes/..." paths from list_folders (foldersByAccount)
+  //   3) the implicit "Notes" root
+  function buildRows(
+    counts: Record<string, number>,
+    fromBackend: string[],
+  ): FolderRow[] {
+    const paths = new Set<string>(['Notes']);
+    for (const p of Object.keys(counts)) {
+      const segs = p.split('/');
+      for (let i = 1; i <= segs.length; i++) paths.add(segs.slice(0, i).join('/'));
+    }
+    for (const p of fromBackend) {
+      const segs = p.split('/');
+      for (let i = 1; i <= segs.length; i++) paths.add(segs.slice(0, i).join('/'));
+    }
+    return Array.from(paths)
+      .map((path) => {
+        const segs = path.split('/');
+        return {
+          path,
+          name: segs[segs.length - 1],
+          depth: segs.length - 1,
+          count: counts[path] || 0,
+        };
+      })
+      .sort((a, b) => compareFolderPaths(a.path, b.path));
+  }
+
+  // Top-level reactive: rows for every account, recomputed whenever any of
+  // the underlying maps change. The template reads from this map instead of
+  // calling buildRows(acct.id) inline — that previously hid the dependency
+  // on folderCountsByAccount/foldersByAccount from Svelte's reactivity, so
+  // the sub-folder tree never re-rendered after the data arrived.
+  $: rowsByAccount = (() => {
+    const out: Record<string, FolderRow[]> = {};
+    for (const a of $activeAccounts) {
+      out[a.id] = buildRows(
+        folderCountsByAccount[a.id] ?? {},
+        foldersByAccount[a.id] ?? [],
+      );
+    }
+    return out;
+  })();
+
+  // Split rows into ordinary folders and the "Agents" group (spec
+  // 2026-10-28 §6): agent folders and what is inside them. The rule — and
+  // which agent folders are protected from rename/move/delete — lives in
+  // sidebar/folderTree.ts (`isAgentFolder`, `isProtectedAgentFolder`), so
+  // grouping and protection read one predicate. A retired `__Extracts__` and
+  // a legacy plain-named `system_workflow` row (`Notes/Lessons`) are ordinary
+  // folders: they list with the others and can be renamed or deleted. Paths
+  // absent from the kinds map default to 'user' (the implicit "Notes" root).
+  $: splitRowsByAccount = (() => {
+    const out: Record<string, { user: FolderRow[]; workflow: FolderRow[] }> = {};
+    for (const a of $activeAccounts) {
+      const rows = rowsByAccount[a.id] ?? [];
+      const kinds = folderKindsByAccount[a.id] ?? {};
+      const user: FolderRow[] = [];
+      const workflow: FolderRow[] = [];
+      for (const r of rows) {
+        if (isAgentFolder(kinds, r.path)) workflow.push(r);
+        else user.push(r);
+      }
+      out[a.id] = { user, workflow };
+    }
+    return out;
+  })();
+
+  // ─── Duplicate-count surfacing ──────────────────────────────────────
+  // Passive indicator: the backend's list_notes pipeline already collapses
+  // Gmail-side duplicate messages by uuid and records the count per account.
+  // We expose that count as a tiny pill in the account header so the user
+  // has a signal that cleanup_orphans is worth running. Click = run cleanup.
+  // The counts live in stores/dupStats.ts, shared with Settings › Accounts.
+  let cleanupResult: Record<string, string> = {};
+  // Which account, if any, is currently being reviewed in the modal.
+  let reviewingAccount: string | null = null;
+  // Curate (M2): the Organize screen's account, desktop only.
+  let organizingAccount: string | null = null;
+  // The footer's AI menu (spec 2026-10-28 §5.2): an anchored popover on
+  // desktop and tablet. The phone has its own way in, the Folders bar's ✦.
+  let aiMenuAnchor: HTMLButtonElement | undefined;
+  let aiMenuOpen = false;
+  // Close the popover, then open the chosen dialog. The anchor takes focus
+  // first, so the dialog hands focus back to it when it closes; `pick` closes
+  // a tablet's portrait drawer, as a folder pick does (TabletChrome).
+  // Opening moves focus to the first item: the popover sits after the rest
+  // of the sidebar in the DOM, so Tab from the button would reach Settings
+  // and About before it. Esc, or a click outside, hands focus back.
+  async function toggleAiMenu() {
+    aiMenuOpen = !aiMenuOpen;
+    if (!aiMenuOpen) return;
+    await tick();
+    document.querySelector<HTMLButtonElement>('.ai-menu button:not(:disabled)')?.focus();
+  }
+  function runFromAiMenu(action: () => void) {
+    aiMenuOpen = false;
+    aiMenuAnchor?.focus();
+    dispatch('pick');
+    action();
+  }
+
+  // Reactive: whenever the notes store changes (a list_notes pass may just
+  // have updated the backend's summary), refetch the stats for every
+  // signed-in account. `$notes` also changes on every editor keystroke, so
+  // the reads are coalesced until the notes go quiet (stores/dupStats.ts).
+  $: if ($notes && $activeAccounts.length > 0) {
+    scheduleDupStatsRefresh($activeAccounts.map((a) => a.id));
+  }
+
+  // backend_capabilities — whether THIS account has a Trash concept at all
+  // (Microsoft does not: a Graph DELETE leaves no restore path). Reads the
+  // account's stored backend_kind, no network call, so it's safe to call on
+  // every account-list change the same way refreshFolders/refreshDupStats
+  // already are. Fetched per account (not just $currentAccount) because the
+  // Recently Deleted row below is rendered once per account section in the
+  // {#each $activeAccounts} loop.
+  async function refreshCapabilities(accountId: string) {
+    try {
+      const caps = await invoke<BackendCapabilities>('backend_capabilities', { accountId });
+      setAccountCapabilities(accountId, caps);
+    } catch {
+      // Leave whatever's cached (or nothing — shouldShowTrash defaults
+      // undefined to true) rather than hide Trash on a transient error.
+    }
+  }
+
+  $: if ($activeAccounts.length > 0) {
+    for (const a of $activeAccounts) refreshCapabilities(a.id);
+  }
+
+  // Write affordances are hidden per-area, matching what each button/menu
+  // item actually invokes — `create_folder`/`rename_folder`/`delete_folder`
+  // are `Write::Folders` server-side, `rename_tag`/`delete_tag` are
+  // `Write::Sidecars` (lib.rs). Using the coarse `canWriteAccount` here would
+  // read as writable on Microsoft — `canWriteAccount` only checks `notes`,
+  // which IS true there — even though folders never reach Apple Notes (a
+  // measured negative, 2026-08-15) and sidecars stay refused until M4:
+  // exactly the frontend/backend divergence this split exists to describe.
+  // The refusal itself lives in `refuse_write` (lib.rs); this only keeps the
+  // user from reaching for a button that would answer with an error. See
+  // `canWrite` for the optimistic default.
+  $: currentCanWriteFolders = canWrite(
+    $currentAccount ? $capabilitiesByAccount[$currentAccount] : undefined,
+    'folders',
+  );
+  $: menuCanWriteNotes = canWrite(
+    menuAccountId ? $capabilitiesByAccount[menuAccountId] : undefined,
+    'notes',
+  );
+  $: menuCanWriteFolders = canWrite(
+    menuAccountId ? $capabilitiesByAccount[menuAccountId] : undefined,
+    'folders',
+  );
+  $: tagMenuCanWriteSidecars = canWrite(
+    tagMenuAccountId ? $capabilitiesByAccount[tagMenuAccountId] : undefined,
+    'sidecars',
+  );
+
+  // If the account currently being viewed just turned out to have no Trash
+  // (capabilities arrived, or the user switched to a no-trash account via a
+  // path that doesn't already reassign selectedFolder — e.g. the ingest
+  // button below, which changes $currentAccount without touching
+  // $selectedFolder), the Recently Deleted row for it just vanished from
+  // the list above. Bounce the selection back to the account's default view
+  // rather than leaving $selectedFolder pointed at an entry with no visible
+  // row — mirrors the reset the account-switcher panel already does at pick
+  // time (see the footer "account-row-pick" onclick below).
+  $: if (
+    $selectedFolder === '__TRASH__' &&
+    $currentAccount &&
+    $capabilitiesByAccount[$currentAccount] &&
+    !shouldShowTrash($capabilitiesByAccount[$currentAccount])
+  ) {
+    selectedFolder.set('Notes');
+  }
+
+  function openReview(accountId: string) {
+    reviewingAccount = accountId;
+  }
+
+  function closeReview() {
+    reviewingAccount = null;
+  }
+
+  function onTrashed(accountId: string, count: number) {
+    cleanupResult = {
+      ...cleanupResult,
+      [accountId]: count === 0 ? 'No duplicates moved' : `Moved ${plural(count, 'duplicate')} to Trash`,
+    };
+    // Trigger a fresh list_notes so dup_stats recomputes from authoritative
+    // Gmail state. Previously the backend decremented dup_stats optimistically
+    // here so the pill responded instantly, but that caused flicker against
+    // Gmail's eventual consistency (the next poll often still saw the
+    // just-trashed messages). Now the backend doesn't touch the count and we
+    // fire a real refresh — slower but truthful. refreshDupStats runs
+    // automatically when $notes updates via the reactive block below.
+    void Promise.resolve(get(refreshNotes)());
+    setTimeout(() => {
+      cleanupResult = { ...cleanupResult, [accountId]: '' };
+    }, 4000);
+  }
+
+  // A pick's store writes are controllers/viewSelection.ts, shared with the
+  // phone panes (sidebar/PhoneFolders, PhoneTagsPane).
+  function selectFolder(accountId: string, path: string) {
+    selectFolderView(accountId, path);
+    // Phone stack: App.svelte's $selectedFolder watcher only calls
+    // navigateToPane('list') when the VALUE changes, so re-tapping the
+    // folder you're already in is invisible to that diff-based watcher.
+    // Call it directly here — navigateToPane is a no-op if the list pane is
+    // already active, and inert on tablet/desktop (isPhoneNavActive() gates
+    // it). The title names the list for the Back label of a note opened from
+    // it (§5.1).
+    navigateToPane('list', currentListTitle());
+    dispatch('pick');
+  }
+
+  // The desktop tag cloud toggles a tag in/out of the multi-tag filter.
+  // App.svelte's $selectedTags reactive paints the union from cache, and
+  // NoteList narrows to AND/OR.
+  function selectTag(accountId: string | null, tag: string) {
+    toggleTagView(accountId, tag);
+    dispatch('pick');
+  }
+
+  // The Views rows' pick. NoteList checks selectedSmartFolder first, and the
+  // folder rows' `active` highlight checks it the same way — without that,
+  // the row underneath stayed lit too.
+  function selectSmartFolder(accountId: string | null, kind: SmartFolderKind) {
+    selectSmartFolderView(accountId, kind);
+    dispatch('pick');
+  }
+
+  // The Views rows for the Smart Folders (icon, tooltip) live in
+  // smartFolders.ts, shared with the phone Smart views pane.
+
+  // The Views and Tags folds and the folded accounts: one stored choice per
+  // device, shared with the phone's Folders pane (sidebarFolds.ts). Views
+  // and Tags start closed, so the folders start near the top; Tags is one
+  // choice for the column, so it no longer flips when its account changes.
+  let viewsOpen = loadViewsOpen();
+  function toggleViewsOpen() {
+    viewsOpen = !viewsOpen;
+    saveViewsOpen(viewsOpen);
+  }
+  let tagsOpen = loadTagsOpen();
+  function toggleTagsOpen() {
+    tagsOpen = !tagsOpen;
+    saveTagsOpen(tagsOpen);
+  }
+  let collapsedAccounts = loadCollapsedAccounts();
+  function toggleAccountCollapsed(accountId: string) {
+    collapsedAccounts = toggleCollapsedAccount(collapsedAccounts, accountId);
+  }
+
+  // ─── Tag context menu (right-click a sidebar tag) ─────────────────────────
+  // Mirrors the folder menu: Rename / Delete operate globally across every note
+  // in the account. Reuses the .folder-menu styling and viewport-fit snap.
+  let tagMenuName: string | null = null;
+  let tagMenuAccountId: string | null = null;
+  let tagMenuX = 0;
+  let tagMenuY = 0;
+  let tagMenuEl: HTMLDivElement | undefined;
+  let tagMenuAdjustedX = 0;
+  let tagMenuAdjustedY = 0;
+  $: if (tagMenuEl && tagMenuName !== null) {
+    const rect = tagMenuEl.getBoundingClientRect();
+    tagMenuAdjustedX =
+      tagMenuX + rect.width > window.innerWidth
+        ? Math.max(8, window.innerWidth - rect.width - 8)
+        : tagMenuX;
+    tagMenuAdjustedY =
+      tagMenuY + rect.height > window.innerHeight
+        ? Math.max(8, window.innerHeight - rect.height - 8)
+        : tagMenuY;
+  }
+
+  // `accountId: null` is the All accounts cloud: its menu explains, instead of
+  // offering rename and delete, which act on one account (spec 2026-11-13 §3.5).
+  function openTagMenu(e: MouseEvent, accountId: string | null, tag: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    tagMenuX = e.clientX;
+    tagMenuY = e.clientY;
+    tagMenuAdjustedX = e.clientX;
+    tagMenuAdjustedY = e.clientY;
+    tagMenuAccountId = accountId ?? ALL_ACCOUNTS;
+    tagMenuName = tag;
+  }
+  function clearTagMenu() {
+    tagMenuName = null;
+    tagMenuAccountId = null;
+  }
+  // Desktop and tablet only: on the phone the tags (and their sheet) are
+  // the Tags pane's (PhoneTagsPane.svelte), and this markup has no tag rows.
+  function closeTagMenu() {
+    clearTagMenu();
+  }
+
+  // The bodies live in controllers/tagActions.ts, shared with the phone Tags
+  // pane's sheet (PhoneTagsPane.svelte).
+  function renameTag(accountId: string, tag: string) {
+    closeTagMenu();
+    return renameTagAction(accountId, tag, askName);
+  }
+
+  function deleteTag(accountId: string, tag: string) {
+    closeTagMenu();
+    return deleteTagAction(accountId, tag, (title, message, options) => askConfirm(title, message, null, options));
+  }
+
+  // ─── Folder context menu ──────────────────────────────────────────────────
+  // Right-click on a folder shows: New sub-folder / Rename / Delete.
+  // We track BOTH the folder path AND the account it belongs to — folder ops
+  // run against a specific account's Gmail, not necessarily the current one.
+  let menuPath: string | null = null;
+  let menuAccountId: string | null = null;
+  let menuX = 0;
+  let menuY = 0;
+  // Viewport-fit (D9 fix): on render, getBoundingClientRect of the menu and
+  // snap left/top back inside the viewport. Without this, opening the menu
+  // near the bottom of a tall sidebar pushes Delete off the screen, where
+  // it can't be clicked. "Move to" no longer inlines its folder list here —
+  // it's a hover flyout (see fitSubmenu below), same as NoteContextMenu —
+  // but this menu can still be a few items tall, so the fit stays.
+  // Phone (gate order: $isAndroid, then layout): the folder menu is a bottom
+  // sheet, and the anchored position above is then unused. The tag menu
+  // never opens on the phone (no tag rows here).
+  $: phoneSheet = $isAndroid && $androidLayoutMode === 'phone';
+  // The layout can leave "phone" (rotation) while a sheet is open. The sheet's
+  // Modal then unmounts without onclose, so the menu state would stay set and
+  // the anchored menu would appear at stale touch coordinates: close instead.
+  // Entering the phone closes an anchored tag menu left open on the tablet:
+  // the phone has no tag menu here, and rotating back must not revive it.
+  let wasPhoneSheet = false;
+  function trackPhoneSheet(now: boolean) {
+    if (wasPhoneSheet && !now) clearFolderMenu();
+    if (now) clearTagMenu();
+    wasPhoneSheet = now;
+  }
+  $: trackPhoneSheet(phoneSheet);
+  type SheetModal = { requestClose(): Promise<boolean>; closeInto(pane: Pane, title?: string): boolean };
+  let folderSheet: SheetModal | undefined;
+  // "Move to" is a second level inside the same sheet, not a floating flyout.
+  let folderSheetLevel: 'root' | 'move' = 'root';
+  $: folderSheetTitle = menuPath === null ? '' : folderName(menuAccountId ?? '', menuPath);
+  // A folder as the user sees it in the tree — "Work", not "Notes/Work" —
+  // for every prompt, confirm and error that names one.
+  function folderName(accountId: string, path: string): string {
+    const row = (rowsByAccount[accountId] ?? []).find((r) => r.path === path);
+    return displayTitle(stripWorkflowMarkers(row?.name ?? path.split('/').pop() ?? path));
+  }
+  // Delete is refused for a folder with sub-folders; the menu says so up
+  // front instead of offering it and then refusing.
+  $: menuHasSubfolders = menuPath !== null && menuAccountId !== null
+    && (foldersByAccount[menuAccountId] ?? []).some((p) => p.startsWith(`${menuPath}/`));
+  $: menuBlockReason = menuPath !== null && menuAccountId !== null
+    ? folderBlockReason($syncBlocks, menuAccountId, menuPath)
+    : null;
+  let menuEl: HTMLDivElement | undefined;
+  let menuAdjustedX = 0;
+  let menuAdjustedY = 0;
+  $: if (menuEl && menuPath !== null) {
+    const rect = menuEl.getBoundingClientRect();
+    menuAdjustedX =
+      menuX + rect.width > window.innerWidth
+        ? Math.max(8, window.innerWidth - rect.width - 8)
+        : menuX;
+    menuAdjustedY =
+      menuY + rect.height > window.innerHeight
+        ? Math.max(8, window.innerHeight - rect.height - 8)
+        : menuY;
+  }
+
+  function openFolderMenu(e: MouseEvent, accountId: string, path: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    menuX = e.clientX;
+    menuY = e.clientY;
+    // Seed adjusted coords with the raw click so the first frame paints at
+    // a sensible position. The reactive above will fix them up once menuEl
+    // binds and we have a real bounding rect to measure against.
+    menuAdjustedX = e.clientX;
+    menuAdjustedY = e.clientY;
+    menuAccountId = accountId;
+    menuPath = path;
+  }
+
+  function clearFolderMenu() {
+    menuPath = null;
+    menuAccountId = null;
+    folderSheetLevel = 'root';
+    moveOpen = false;
+  }
+  // The anchored menu's Move to flyout: open on hover (CSS), and held open by
+  // a click, Enter or → (menuKeys), so it is not a pointer-only control.
+  let moveOpen = false;
+
+  // ─── Ask Jodd from a menu (spec 2026-10-23 §6.2) ──────────────────────────
+  // Disabled only for a folder hidden from AI; an account's AI data permission
+  // is granted from the popup's own consent step, so it never disables these.
+  $: menuAiHidden = aiHiddenFor($hiddenFromAi, menuAccountId, menuPath);
+  // The folder menu's AI items (controllers/aiActions.ts). Studio creates a
+  // note here, so it also needs the notes write, like "New note here".
+  $: askFolderGate = aiGate({ hidden: menuAiHidden });
+  $: studioGate = aiGate({ canWrite: menuCanWriteNotes, hidden: menuAiHidden });
+  $: skillGate = aiGate({ hidden: menuAiHidden });
+  function askAboutFolder(accountId: string, path: string) {
+    closeFolderMenu();
+    openAskWith({ kind: 'folder', account_id: accountId, label: path });
+  }
+
+  // The account header's menu — today it holds only Ask Jodd. Anchored on
+  // desktop/tablet (reusing .folder-menu, so the window Esc/outside-tap
+  // handlers close it), a sheet on the phone.
+  let accountMenuId: string | null = null;
+  let accountMenuX = 0;
+  let accountMenuY = 0;
+  let accountMenuEl: HTMLDivElement | undefined;
+  let accountSheet: SheetModal | undefined;
+  $: if (accountMenuEl && accountMenuId !== null) {
+    const rect = accountMenuEl.getBoundingClientRect();
+    if (accountMenuX + rect.width > window.innerWidth) accountMenuX = Math.max(8, window.innerWidth - rect.width - 8);
+    if (accountMenuY + rect.height > window.innerHeight) accountMenuY = Math.max(8, window.innerHeight - rect.height - 8);
+  }
+  $: accountSheetTitle = accountMenuId === null
+    ? ''
+    : (() => { const a = $activeAccounts.find((x) => x.id === accountMenuId); return a ? accountDisplay(a) : accountMenuId; })();
+  function openAccountMenu(e: MouseEvent, accountId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeFolderMenu();
+    closeTagMenu();
+    accountMenuX = e.clientX;
+    accountMenuY = e.clientY;
+    accountMenuId = accountId;
+  }
+  function clearAccountMenu() {
+    accountMenuId = null;
+  }
+  function closeAccountMenu() {
+    if (accountSheet) void accountSheet.requestClose();
+    else clearAccountMenu();
+  }
+  function askAbout(scope: AskScope) {
+    closeAccountMenu();
+    openAskWith(scope);
+  }
+  // The account and the dialog change in one synchronous step, as the
+  // account header's button did (gotcha #28: the dialog's account-change
+  // reset sees one change, before it opens).
+  function makeNoteIn(accountId: string) {
+    closeAccountMenu();
+    if ($currentAccount !== accountId) currentAccount.set(accountId);
+    extractModalOpen.set(true);
+  }
+  // On a phone the menu is a sheet: close it through its Modal. An item that
+  // navigates passes the pane it lands on, so the sheet's history entry
+  // becomes that pane's and Back returns beneath it.
+  function closeFolderMenu(into?: Pane, title?: string) {
+    if (folderSheet) {
+      if (into && folderSheet.closeInto(into, title)) return;
+      void folderSheet.requestClose();
+    } else {
+      clearFolderMenu();
+    }
+  }
+
+  // Submenu viewport-fit for the "Move to" hover flyout — identical to
+  // NoteContextMenu's fitSubmenu, kept in lockstep so the two Move-to
+  // affordances behave the same, not just look the same.
+  function fitSubmenu(e: MouseEvent) {
+    fitSubmenuAt(e.currentTarget as HTMLElement);
+  }
+  function fitSubmenuAt(anchor: HTMLElement) {
+    const sub = anchor.querySelector(':scope > .submenu') as HTMLElement | null;
+    if (!sub) return;
+    const prevDisplay = sub.style.display;
+    sub.style.display = 'block';
+    sub.style.visibility = 'hidden';
+    const rect = sub.getBoundingClientRect();
+    sub.style.display = prevDisplay;
+    sub.style.visibility = '';
+    if (rect.right > window.innerWidth - 8) {
+      sub.classList.add('flip-left');
+    } else {
+      sub.classList.remove('flip-left');
+    }
+    const overflow = rect.bottom - (window.innerHeight - 8);
+    if (overflow > 0) {
+      const newTop = Math.max(-(rect.height - 40), -overflow);
+      sub.style.top = `${newTop}px`;
+    } else {
+      sub.style.top = '';
+    }
+  }
+
+  // The sheets' Modals own Esc and outside taps (their rows live in a
+  // <dialog>, outside .folder-menu).
+  // The account panel too: it closed only from its own chip, so Esc did
+  // nothing and a click anywhere else left it open over the column.
+  function onWindowKey(e: KeyboardEvent) {
+    if (phoneSheet) return;
+    if (e.key !== 'Escape') return;
+    closeFolderMenu(); closeTagMenu(); closeAccountMenu();
+    if (accountPanelOpen) {
+      accountPanelOpen = false;
+      accountChipEl?.focus();
+    }
+  }
+  function onWindowPointerDown(e: PointerEvent) {
+    if (phoneSheet) return;
+    const target = e.target as HTMLElement;
+    if (!target.closest('.folder-menu')) { closeFolderMenu(); closeTagMenu(); closeAccountMenu(); }
+    // A prompt or confirm the panel opened sits in a <dialog> outside it.
+    if (accountPanelOpen && !target.closest('.account-panel, .account-chip, dialog')) accountPanelOpen = false;
+  }
+
+  onMount(() => {
+    window.addEventListener('keydown', onWindowKey);
+    window.addEventListener('pointerdown', onWindowPointerDown, true);
+  });
+  onDestroy(() => {
+    window.removeEventListener('keydown', onWindowKey);
+    window.removeEventListener('pointerdown', onWindowPointerDown, true);
+  });
+
+  // ─── Inline prompt and confirm ────────────────────────────────────────────
+  // Both live in PromptDialogs (shared with AccountAddHost); these forward to
+  // it so every call site stays `await askName(...)` / `await askConfirm(...)`.
+  let promptDialogs: PromptDialogs;
+  function askName(title: string, defaultValue: string = ''): Promise<string | null> {
+    return promptDialogs.askName(title, defaultValue);
+  }
+  // `checkboxLabel` is today only "Also remove Jodd's key from the server" on
+  // a Managed SSH account's removal; null hides the checkbox.
+  function askConfirm(
+    title: string,
+    message: string,
+    checkboxLabel: string | null = null,
+    options: ConfirmOptions = {},
+  ): Promise<boolean> {
+    return promptDialogs.askConfirm(title, message, checkboxLabel, options);
+  }
+  // Bound two-way into the confirm's checkbox. Defaults on (spec: checked
+  // by default), and removeAccount's confirm resets it to true itself before
+  // each new removal attempt so a cancelled attempt never leaves a stale
+  // unchecked state for the next one.
+  let removeRevokeKey = true;
+
+  // Create a fresh tmp blank note labelled with the given folder under the
+  // given account. Lifecycle same as the + button in NoteList — tmp: UUID,
+  // autosave on first keystroke, dropped if abandoned.
+  function newNoteInFolder(accountId: string, path: string) {
+    // Opens the folder's list, then the new note: the sheet closes into the
+    // list pane (the pane picking a folder lands on), and the selection below
+    // pushes the note pane on top, exactly as without the sheet.
+    closeFolderMenu('list', viewName(null, path, ''));
+    openNewNote(accountId, path);
+  }
+
+  // Opens Research Studio's dialog (StudioModal, mounted by App) for this
+  // folder. The menu closes first: on a phone it is a sheet, and the dialog
+  // opens over the pane beneath it.
+  function generateFromFolder(accountId: string, path: string) {
+    closeFolderMenu();
+    studioRequest.set({ accountId, label: path });
+  }
+
+  // Publish as a Claude Code skill (spec 2026-11-05 §6.1): SkillDialog,
+  // mounted by App, opens while `skillRequest` is set. Desktop only.
+  function publishFolderAsSkill(accountId: string, path: string) {
+    closeFolderMenu();
+    skillRequest.set({ accountId, folder: path });
+  }
+
+  // ─── Folder operations ────────────────────────────────────────────────────
+  // All take an explicit accountId — each Gmail account has its own label
+  // namespace, so we can't rely on $currentAccount inside the handler.
+
+  // Doctrine-compliant: optimistic write to the store FIRST, then invoke,
+  // then rollback on failure. Backend `create_folder` is local-first (it
+  // commits to SQLite synchronously and the worker pushes to Gmail in the
+  // background), so the only way the await can fail is a validation error
+  // (duplicate name, empty name, etc.) — quick + deterministic. We do the
+  // ancestor-expand and selection move BEFORE awaiting so the user sees
+  // the new folder land instantly.
+  //
+  // The predicted path matches what `create_folder` constructs internally
+  // (`{parent}/{segment}` or `Notes/{segment}`). If the backend disagrees
+  // we log and let refreshFolders() sort it out — that's a code-version
+  // skew situation, not a user-visible issue.
+  // `title` overrides the prompt's title (the phone Folders bar names the
+  // account when more than one is active).
+  async function createFolderUnder(accountId: string, parentPath: string | null, title?: string) {
+    closeFolderMenu();
+    const name = await askName(
+      title ?? (parentPath ? `New folder in "${folderName(accountId, parentPath)}"` : 'New folder name')
+    );
+    if (!name) return;
+
+    const segment = name.trim();
+    if (!segment) return;
+    const predicted = parentPath ? `${parentPath}/${segment}` : `Notes/${segment}`;
+
+    const prevByAccount = foldersByAccount;
+    const prevExpanded = expandedPaths;
+    const prevSelectedFolder = get(selectedFolder);
+    const prevSmartFolder = get(selectedSmartFolder);
+    const prevTags = get(selectedTags);
+    const prevCurrentAccount = get(currentAccount);
+
+    // Optimistic store mutation: folder list, expanded ancestors, focus.
+    foldersByAccount = {
+      ...foldersByAccount,
+      [accountId]: [...(foldersByAccount[accountId] ?? []), predicted],
+    };
+    const segs = predicted.split('/');
+    const ancestorUpdates: Record<string, boolean> = {};
+    for (let i = 1; i < segs.length; i++) {
+      ancestorUpdates[segs.slice(0, i).join('/')] = true;
+    }
+    expandedPaths = { ...expandedPaths, ...ancestorUpdates };
+    if ($currentAccount !== accountId) currentAccount.set(accountId);
+    navigateToFolder(predicted);
+    // The rollback restores the old view only if the user is still on this one.
+    const optimisticView = viewSnapshot();
+
+    try {
+      const result = await invoke<{ id: string; name: string }>('create_folder', {
+        accountId,
+        name,
+        parentPath,
+      });
+      if (result.name !== predicted) {
+        console.warn('[jodd] create_folder: predicted', predicted, 'returned', result.name);
+        // Reconcile the store with the actual path. Cheap — the row count
+        // doesn't change, just the string.
+        foldersByAccount = {
+          ...foldersByAccount,
+          [accountId]: (foldersByAccount[accountId] ?? []).map((p) =>
+            p === predicted ? result.name : p,
+          ),
+        };
+        if (get(selectedFolder) === predicted) selectedFolder.set(result.name);
+      }
+      refreshFolders();
+    } catch (e) {
+      foldersByAccount = prevByAccount;
+      expandedPaths = prevExpanded;
+      if (viewUnchanged(optimisticView)) {
+        selectedFolder.set(prevSelectedFolder);
+        selectedSmartFolder.set(prevSmartFolder);
+        selectedTags.set(prevTags);
+        if (prevCurrentAccount && get(currentAccount) !== prevCurrentAccount) {
+          currentAccount.set(prevCurrentAccount);
+        }
+      }
+      error.set(failureText(`create the folder "${segment}"`, e));
+    }
+  }
+
+  // Doctrine-compliant: optimistic rename + selection-fix BEFORE the
+  // await. Backend rename_folder runs a single SQLite transaction
+  // (rename_subtree) and returns; failure modes are validation errors
+  // surfaced from validate_folder_segment / sibling-collision check.
+  async function renameFolder(accountId: string, path: string) {
+    closeFolderMenu();
+    // The menu offers no Rename for the Notes root; this only guards a caller.
+    if (path === 'Notes') return;
+    const currentName = path.split('/').pop() ?? '';
+    const shown = folderName(accountId, path);
+    const next = await askName(`Rename "${shown}"`, currentName);
+    if (!next || next === currentName) return;
+
+    const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const predicted = parentPath ? `${parentPath}/${next}` : next;
+
+    const prevByAccount = foldersByAccount;
+    const prevNotes = get(notes);
+    const prevIndex = get(noteIndex);
+    const prevSelected = get(selectedFolder);
+    const prevOpen = get(selectedNote);
+
+    const rewriteLabel = (label: string): string => {
+      if (label === path) return predicted;
+      if (label.startsWith(`${path}/`)) return predicted + label.slice(path.length);
+      return label;
+    };
+    foldersByAccount = {
+      ...foldersByAccount,
+      [accountId]: (foldersByAccount[accountId] ?? []).map(rewriteLabel),
+    };
+    notesRewriteOnFolderRename(accountId, path, predicted);
+    indexRewriteOnFolderRename(accountId, path, predicted);
+    if ($selectedFolder === path && $currentAccount === accountId) {
+      selectedFolder.set(predicted);
+    }
+
+    // `rename_subtree` re-arms every row it moves.
+    forgetFolderBlocks(accountId, path);
+    try {
+      const result = await invoke<{ id: string; name: string }>('rename_folder', {
+        accountId,
+        path,
+        newName: next,
+      });
+      if (result.name !== predicted) {
+        console.warn('[jodd] rename_folder: predicted', predicted, 'returned', result.name);
+      }
+      refreshFolders();
+    } catch (e) {
+      foldersByAccount = prevByAccount;
+      notes.set(prevNotes);
+      restoreOpenNoteFolder(prevOpen);
+      noteIndex.set(prevIndex);
+      selectedFolder.set(prevSelected);
+      refreshFolders();
+      error.set(failureText(`rename "${shown}"`, e));
+    }
+  }
+
+  // Drag-and-drop was removed — WKWebView's HTML5 DnD silently swallowed
+  // dragenter/dragover events, so the right-click "Move to" menu handles
+  // folder reorganization instead. Same backend (`move_folder`); just no
+  // gesture wiring. Validity check kept here for the Move-to submenu filter.
+  function isValidDropTarget(src: string, target: string, kinds: Record<string, string>): boolean {
+    if (target === src) return false;
+    // Never into an agent folder (spec 2026-10-28 §6.4): jodd-mcp's allowlist
+    // matches a whole subtree, so the moved folder would become agent-writable.
+    if (isAgentFolder(kinds, target)) return false;
+    if (target.startsWith(`${src}/`)) return false; // descendant
+    const parent = src.includes('/') ? src.slice(0, src.lastIndexOf('/')) : '';
+    if (target === parent) return false; // no-op
+    return true;
+  }
+
+  // Three-way classification for move-to submenu rendering. Filtering out
+  // the parent entirely makes it look like the folder vanished (e.g. when
+  // right-clicking play5a, play5 disappears from the move-to list because
+  // moving play5a into play5 is a no-op). Render the parent disabled with
+  // a "(current)" tag instead so the user can see the structure they're
+  // working inside. Self and descendants are still hidden — those targets
+  // are truly impossible, not just no-ops.
+  function moveTargetState(src: string, target: string, kinds: Record<string, string>): 'valid' | 'parent' | 'hide' {
+    if (target === src) return 'hide';
+    if (isAgentFolder(kinds, target)) return 'hide'; // see isValidDropTarget
+    if (target.startsWith(`${src}/`)) return 'hide';
+    const parent = src.includes('/') ? src.slice(0, src.lastIndexOf('/')) : '';
+    if (target === parent) return 'parent';
+    return 'valid';
+  }
+
+  // Re-home a folder under a new parent within one account. Cross-account
+  // moves aren't supported (each Gmail account has its own label namespace).
+  // Optimistic update on the local store; rollback on backend failure.
+  async function moveFolderTo(accountId: string, src: string, newParent: string) {
+    closeFolderMenu();
+    if (!isValidDropTarget(src, newParent, folderKindsByAccount[accountId] ?? {})) return;
+
+    const leaf = src.split('/').pop()!;
+    const predicted = `${newParent}/${leaf}`;
+    const shown = folderName(accountId, src);
+
+    const prevByAccount = foldersByAccount;
+    const prevNotes = get(notes);
+    const prevIndex = get(noteIndex);
+    const prevSelected = get(selectedFolder);
+    const prevOpen = get(selectedNote);
+
+    const rewriteLabel = (label: string): string => {
+      if (label === src) return predicted;
+      if (label.startsWith(`${src}/`)) return predicted + label.slice(src.length);
+      return label;
+    };
+    foldersByAccount = {
+      ...foldersByAccount,
+      [accountId]: (foldersByAccount[accountId] ?? []).map(rewriteLabel),
+    };
+    notesRewriteOnFolderRename(accountId, src, predicted);
+    indexRewriteOnFolderRename(accountId, src, predicted);
+    if (
+      $currentAccount === accountId &&
+      ($selectedFolder === src || $selectedFolder.startsWith(`${src}/`))
+    ) {
+      selectedFolder.set(rewriteLabel($selectedFolder));
+    }
+
+    forgetFolderBlocks(accountId, src);
+    try {
+      const actualNewPath = await invoke<string>('move_folder', {
+        accountId,
+        fromPath: src,
+        toParentPath: newParent,
+      });
+      if (actualNewPath !== predicted) {
+        console.warn('[jodd] move_folder: predicted', predicted, 'returned', actualNewPath);
+      }
+      refreshFolders();
+    } catch (err) {
+      foldersByAccount = prevByAccount;
+      notes.set(prevNotes);
+      restoreOpenNoteFolder(prevOpen);
+      noteIndex.set(prevIndex);
+      selectedFolder.set(prevSelected);
+      refreshFolders();
+      error.set(failureText(`move "${shown}"`, err));
+    }
+  }
+
+  // Doctrine-compliant: optimistic removal + selection-bounce BEFORE the
+  // await. Backend delete_folder enforces empty-folder + no-children
+  // invariants against the cache — if either check fails the catch
+  // restores the folder. Worker propagates the trash to Gmail in the
+  // background.
+  async function deleteFolder(accountId: string, path: string) {
+    closeFolderMenu();
+    // The menu offers no Delete for the Notes root; this only guards a caller.
+    if (path === 'Notes') return;
+    // Sub-folders are a structural fact the sidebar already renders from
+    // this same foldersByAccount array — no staleness risk the way note
+    // counts have (those are synthesized from $notes/$noteIndex, which can
+    // drift — see the ghost-folder bug). If we already know for certain
+    // this will fail, say so immediately instead of asking "are you sure?"
+    // and then failing right after — that trains users to distrust the
+    // confirm dialog. Note-count emptiness stays deferred to the backend
+    // (the optimistic-attempt-then-rollback below), since that signal
+    // genuinely can be stale.
+    const hasSubfolders = (foldersByAccount[accountId] ?? []).some((p) =>
+      p.startsWith(`${path}/`)
+    );
+    // The menu shows Delete disabled with its reason (menuHasSubfolders).
+    if (hasSubfolders) return;
+    const shown = folderName(accountId, path);
+    const ok = await askConfirm(
+      `Delete "${shown}"?`,
+      'Only an empty folder can be deleted. If it still has notes, Jodd keeps it and tells you.',
+      null,
+      { destructive: true, confirmLabel: 'Delete' },
+    );
+    if (!ok) return;
+
+    const prevByAccount = foldersByAccount;
+    const prevSelected = get(selectedFolder);
+
+    foldersByAccount = {
+      ...foldersByAccount,
+      [accountId]: (foldersByAccount[accountId] ?? []).filter((p) => p !== path),
+    };
+    if ($selectedFolder === path && $currentAccount === accountId) {
+      selectedFolder.set('Notes');
+    }
+
+    forgetFolderBlocks(accountId, path);
+    try {
+      await invoke('delete_folder', { accountId, path });
+      refreshFolders();
+    } catch (e) {
+      foldersByAccount = prevByAccount;
+      refreshFolders();
+      selectedFolder.set(prevSelected);
+      error.set(failureText(`delete "${shown}"`, e));
+    }
+  }
+
+  // Remove ANY signed-in account — the body is `removeAccount` in
+  // controllers/accountActions.ts, shared with Settings › Accounts. What stays
+  // here is this component's own part: the confirm and its bound revoke
+  // checkbox, the folder tree, and closing the panel.
+  async function removeAccount(a: Account) {
+    const outcome = await removeAccountAction(a, {
+      confirm: async (title, message, checkboxLabel, options) => {
+        removeRevokeKey = true;
+        const ok = await askConfirm(title, message, checkboxLabel, options);
+        return { ok, checked: removeRevokeKey };
+      },
+      onRemoved: (accountId) => {
+        const updated = { ...foldersByAccount };
+        delete updated[accountId];
+        foldersByAccount = updated;
+      },
+    });
+    if (outcome === 'cancelled') return;
+    if (outcome === 'failed') {
+      // It used to close the panel and say nothing, so a failed remove looked
+      // exactly like a successful one until the row turned out to still be
+      // there. The panel stays open, on the account it failed to remove.
+      error.set(`Couldn't remove ${accountDisplay(a)}. Its notes and settings are unchanged. Try again.`);
+      return;
+    }
+    accountPanelOpen = false;
+  }
+
+  // Every add-account kind starts in controllers/accountActions.ts
+  // (`startAddAccount`), shared with Settings › Accounts. Gmail, Microsoft
+  // and iCloud run there; Local Folder and both SSH flows, and the
+  // oauth-success post-add refresh, run in AccountAddHost, which App.svelte
+  // keeps mounted in every layout — the phone layout unmounts this
+  // component whenever the Folders pane is not showing.
+  function addAccount(kind: AddAccountKind) {
+    accountPanelOpen = false;
+    startAddAccount(kind);
+  }
+
+  // App version — fetched once on mount, shown in the footer version label.
+  let appVersion = '';
+  onMount(async () => {
+    try { appVersion = await getVersion(); } catch { appVersion = ''; }
+  });
+
+  // Bottom-left account-management panel state. Click the footer chip to
+  // open; click outside or pick an action to close.
+  let accountPanelOpen = false;
+  let accountChipEl: HTMLButtonElement | undefined;
+  function toggleAccountPanel() {
+    accountPanelOpen = !accountPanelOpen;
+  }
+
+  // Inactive group — draining/inactive accounts, tucked under a collapsible
+  // header below the active list. `accounts` deliberately keeps everything
+  // (see notes.ts activeAccounts doc comment); this is the one place in the
+  // sidebar that reads the dismissed half of it.
+  let inactiveOpen = false;
+  let pending: Record<string, number> = {};
+  // True for an account whose last count_pending_pushes call failed. Kept
+  // separate from `pending` (rather than deleting the stale entry) so the
+  // row can tell "never fetched yet" (shows "…") apart from "fetch keeps
+  // failing" (shows an explicit warning) instead of both looking identical.
+  let pendingError: Record<string, boolean> = {};
+
+  $: dismissedAccounts = partitionAccounts($accounts).dismissed;
+
+  // Polled while the group is open so "N left" counts DOWN. The worker
+  // drains its queues on its own 5s tick and nothing else in this component
+  // changes while that happens, so a one-shot fetch on open would freeze the
+  // number at whatever it was the moment the panel opened. This file predates
+  // runes (see the `$:` reactive statements throughout), so the poll is
+  // started/stopped by a reactive block instead of an `$effect` teardown —
+  // same lifecycle, plain-Svelte-4-compatible shape. `onDestroy` below is the
+  // backstop in case the component unmounts while the group is still open.
+  // Gated on accountPanelOpen too: the group's DOM only exists while the
+  // panel is open, and inactiveOpen (a separate toggle) survives the panel
+  // closing, so without this the poll would keep firing every 3s against
+  // nothing visible for the rest of the session.
+  let pendingPollHandle: ReturnType<typeof setInterval> | null = null;
+  const PENDING_POLL_MS = 3_000;
+
+  function refreshPending() {
+    for (const a of dismissedAccounts.filter((x) => x.status === 'draining')) {
+      invoke<PendingPushes>('count_pending_pushes', { accountId: a.id })
+        .then((c) => {
+          pending = { ...pending, [a.id]: totalPending(c) };
+          if (pendingError[a.id]) pendingError = { ...pendingError, [a.id]: false };
+        })
+        .catch((e) => {
+          // Logged, not swallowed — a command that keeps failing must be
+          // visible (see pendingError below), not indistinguishable from a
+          // slow load.
+          console.error(`count_pending_pushes failed for ${a.id}:`, e);
+          pendingError = { ...pendingError, [a.id]: true };
+        });
+    }
+    // The worker flips draining -> inactive on its own 5s tick, entirely in
+    // Rust, and emits no event — so the frontend `accounts` store (last
+    // written by the optimistic status writes in accountActions) otherwise never
+    // learns the drain finished. Piggyback that pickup on this same poll
+    // (already scoped to exactly when the Inactive group is open) instead of
+    // adding a second timer. The backend is authoritative here, so replace
+    // the whole list rather than patch individual fields.
+    //
+    // Same latest-call-wins guard as refreshFoldersSeq above: this fetch can
+    // straddle a user click on "Stop waiting" / "Reactivate", whose
+    // status write does its own optimistic snapshot/mutate/invoke/rollback. If
+    // that happens, this response is a stale snapshot from before (or during)
+    // that optimistic write and must not clobber it — drop it and let the
+    // NEXT poll tick (3s later) pick up the settled state instead.
+    const seq = accountStatusChangeSeq();
+    invoke<Account[]>('list_accounts')
+      .then((list) => {
+        if (accountStatusChangeSeq() !== seq) return;
+        accounts.set(list);
+      })
+      .catch((e) => console.error('list_accounts (inactive-group poll) failed', e));
+  }
+
+  $: if (accountPanelOpen && inactiveOpen) {
+    if (pendingPollHandle === null) {
+      refreshPending();
+      pendingPollHandle = setInterval(refreshPending, PENDING_POLL_MS);
+    }
+  } else if (pendingPollHandle !== null) {
+    clearInterval(pendingPollHandle);
+    pendingPollHandle = null;
+  }
+
+  onDestroy(() => {
+    if (pendingPollHandle !== null) clearInterval(pendingPollHandle);
+  });
+
+  // Every active account's sync state (lib/accountDot.ts; spec 2026-11-10
+  // §3). Status and blocked_reason ride on the account; what is still queued
+  // or refused for good does not, so it is read with count_pending_pushes —
+  // the same SQLite-only count the Inactive group polls above (no credential
+  // store: gotcha #15). The worker drains on its own 5s tick and emits
+  // nothing for a pin, folder or delete push, so the counts are polled at
+  // that cadence while the column is on screen (gotcha #6). The phone too
+  // (spec 2026-11-12 §5): its Folders pane is this component, mounted only
+  // while that pane shows, so it polls exactly while the headers are seen.
+  //
+  // Keyed by account, so a header — or the chip after a switch — can only
+  // ever show its own account's number, never the previous one's under a new
+  // name (gotcha #28). A slow answer older than the newest request for the
+  // same account is dropped.
+  let countsByAccount: Record<string, { counts?: PendingPushes; failed: boolean }> = {};
+  const countSeq: Record<string, number> = {};
+  let countsPollKey = '';
+  let countsPollHandle: ReturnType<typeof setInterval> | null = null;
+  const COUNTS_POLL_MS = 5_000;
+
+  function refreshCounts(ids: string[]) {
+    for (const id of ids) {
+      const seq = (countSeq[id] = (countSeq[id] ?? 0) + 1);
+      invoke<PendingPushes>('count_pending_pushes', { accountId: id })
+        .then((counts) => {
+          if (countSeq[id] === seq) countsByAccount = { ...countsByAccount, [id]: { counts, failed: false } };
+        })
+        .catch((e) => {
+          console.error(`count_pending_pushes (sidebar) failed for ${id}:`, e);
+          if (countSeq[id] === seq) countsByAccount = { ...countsByAccount, [id]: { failed: true } };
+        });
+    }
+  }
+
+  function stopCountsPoll() {
+    if (countsPollHandle !== null) clearInterval(countsPollHandle);
+    countsPollHandle = null;
+    countsPollKey = '';
+  }
+
+  $: activeIds = $activeAccounts.map((a) => a.id);
+  $: if (activeIds.length > 0) {
+    const key = activeIds.join('\n');
+    if (key !== countsPollKey) {
+      stopCountsPoll();
+      countsPollKey = key;
+      const ids = activeIds;
+      refreshCounts(ids);
+      countsPollHandle = setInterval(() => refreshCounts(ids), COUNTS_POLL_MS);
+    }
+  } else {
+    stopCountsPoll();
+  }
+
+  onDestroy(stopCountsPoll);
+
+  // Field Instrument's sync meter: eight segments, so a glance reads 1–7
+  // exactly and "8 or more" as full.
+  const METER = [0, 1, 2, 3, 4, 5, 6, 7];
+
+  $: dotsByAccount = Object.fromEntries(
+    $activeAccounts.map((a) => [
+      a.id,
+      accountDotState(a, countsByAccount[a.id]?.counts, countsByAccount[a.id]?.failed ?? false),
+    ]),
+  ) as Record<string, AccountDot>;
+  $: chipRead = $currentAccount ? countsByAccount[$currentAccount] : undefined;
+  $: chipDot = accountDotState(
+    $accounts.find((a) => a.id === $currentAccount),
+    chipRead?.counts,
+    chipRead?.failed ?? false,
+  );
+
+  // Status writes — Reactivate, Stop waiting, and Settings › Accounts'
+  // Deactivate — live in controllers/accountActions.ts. Each bumps
+  // `accountStatusChangeSeq()`, which refreshPending's poll above reads.
+  // Reactivate's warm-up (`warmUpAccount`) runs there too.
+  async function reactivate(a: Account) {
+    try {
+      await setAccountActive(a.id, true);
+    } catch {
+      // Logged and rolled back by the action; nothing to warm up.
+    }
+  }
+
+  // Stop waiting — the rule (an unknown count warns too) and its wording
+  // live in controllers/accountActions.ts, shared with the account page.
+  async function stopWaitingFor(a: Account) {
+    const outcome = await stopWaitingAction(a, { confirm: (title, message) => askConfirm(title, message) });
+    if (outcome === 'failed') error.set(STOP_WAITING_FAILED);
+  }
+
+  // The row's gear opens that account's page in Settings › Accounts.
+  function openSettings(a: Account) {
+    accountPanelOpen = false; // hide the panel under the modal
+    settingsRoute.set('accounts/' + a.id);
+  }
+</script>
+
+{#if phoneSheet}
+<!-- The phone's own Folders pane (spec 2026-10-20 §5.2). The folder tree's
+     state and the folder sheet stay here, shared with the tablet layout. -->
+<PhoneFolders
+  split={splitRowsByAccount}
+  totals={accountTotals}
+  {expandedPaths}
+  dots={dotsByAccount}
+  {viewsOpen}
+  {collapsedAccounts}
+  ontoggle={toggleExpand}
+  ontoggleviews={toggleViewsOpen}
+  ontoggleaccount={toggleAccountCollapsed}
+  onfoldermenu={openFolderMenu}
+  onaccountmenu={openAccountMenu}
+  onnewfolder={(accountId, title) => createFolderUnder(accountId, null, title)}
+/>
+{:else}
+<aside class="sidebar" style="width: {width}px; min-width: {width}px;">
+  <!-- Desktop and tablet only: on the phone the Folders pane's PaneHeader
+       (App.svelte) is its header, and the collapse ‹ has nothing to collapse. -->
+  <div class="sidebar-header" class:tablet-bar={tabletFrame !== null}>
+    <span class="app-title">Jodd</span>
+    <div class="header-actions">
+      <button
+        class="new-folder-btn"
+        onclick={() => { if ($currentAccount) createFolderUnder($currentAccount, null); }}
+        title={currentCanWriteFolders
+          ? (currentAcct && $activeAccounts.length > 1 ? `New folder in ${accountNameWithBackend(currentAcct, $activeAccounts)}` : 'New folder')
+          : "This account can't accept folder changes in Jodd yet"}
+        aria-label={currentAcct && $activeAccounts.length > 1 ? `New folder in ${accountNameWithBackend(currentAcct, $activeAccounts)}` : 'New folder'}
+        disabled={!$currentAccount || !currentCanWriteFolders}
+      ><Icon name="plus" /></button>
+      {#if tabletFrame !== 'column'}
+      <button
+        class="new-folder-btn"
+        onclick={() => dispatch('collapse')}
+        title="Collapse sidebar"
+        aria-label="Collapse sidebar"
+      ><Icon name="chevron-left" /></button>
+      {/if}
+    </div>
+  </div>
+
+  <nav class="folder-list" use:navRows aria-label="Folders">
+    <!-- The workspace's Views and Tags, once (spec 2026-11-12 §1–§4), above
+         the accounts, in the same order as the phone's Folders pane. With
+         more than one account the "For ⌄" picker names the account they show
+         and changes it; with one there is nothing to name. -->
+    <ScopePicker dots={dotsByAccount} />
+    {#if scopeAll || scopeAcct}
+      <div class="folder-group workspace-views" data-scope-account={viewAccountId ?? ALL_ACCOUNTS}>
+        <h4 class="group-header views-header">
+          <button
+            type="button"
+            class="views-toggle"
+            aria-expanded={viewsOpen}
+            onclick={toggleViewsOpen}
+          >
+            <span class="tags-caret"><Icon name={viewsOpen ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+            <span>Views</span>
+          </button>
+        </h4>
+        {#if viewsOpen}
+        {#each SMART_FOLDER_KINDS as kind (kind)}
+          {@const open = !!$selectedSmartFolder && $selectedSmartFolder.account === viewAccountId && $selectedSmartFolder.kind === kind}
+          <div
+            class="folder-item view-row"
+            class:active={open}
+            aria-current={open ? 'true' : undefined}
+            role="button"
+            tabindex="-1"
+            data-smart-folder={kind}
+            title={SMART_FOLDER_ROWS[kind].title}
+            onclick={() => selectSmartFolder(viewAccountId, kind)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectSmartFolder(viewAccountId, kind); } }}
+          >
+            <span class="expand-toggle empty"></span>
+            <span class="folder-icon"><Icon name={SMART_FOLDER_ROWS[kind].icon} /></span>
+            <span class="folder-name">{SMART_FOLDER_NAMES[kind]}</span>
+          </div>
+        {/each}
+        {/if}
+      </div>
+      <!-- Tags: Jodd-local, parallel to folders. Picking one filters the list
+           to notes carrying it. Hidden when the account has none. A long
+           cloud gets a filter field and a height of its own, so opening it
+           never pushes the accounts out of the column (spec 2026-11-12 §4). -->
+      {#if scopeTags.length > 0}
+        <div class="tags-header">
+          <button
+            type="button"
+            class="tags-toggle"
+            aria-expanded={tagsOpen}
+            onclick={toggleTagsOpen}
+          >
+            <span class="tags-caret"><Icon name={tagsOpen ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+            <span>Tags</span>
+            <span class="tags-num">{scopeTags.length}</span>
+          </button>
+          {#if cloudOwnsFilter && $selectedTags.size > 0}
+            <span class="tag-controls">
+              {#if $selectedTags.size > 1}
+                <button
+                  type="button"
+                  class="tag-mode"
+                  title={$tagMatchMode === 'AND'
+                    ? 'Showing notes with every selected tag. Switch to notes with any of them.'
+                    : 'Showing notes with any selected tag. Switch to notes with all of them.'}
+                  onclick={() => tagMatchMode.update((m) => (m === 'AND' ? 'OR' : 'AND'))}
+                >{$tagMatchMode === 'AND' ? 'Match all' : 'Match any'}</button>
+              {/if}
+              <button type="button" class="tag-clear" onclick={() => clearSelectedTags()}>Clear</button>
+            </span>
+          {/if}
+        </div>
+        {#if tagsOpen}
+          {#if scopeTags.length >= TAG_FILTER_FROM}
+            <div class="tag-filter">
+              <input
+                type="search"
+                class="tag-filter-input"
+                placeholder="Filter {scopeTags.length} tags"
+                aria-label="Filter tags"
+                bind:value={tagFilter}
+                onkeydown={(e) => { if (e.key === 'Escape' && tagFilter) { e.stopPropagation(); tagFilter = ''; } }}
+              />
+            </div>
+          {/if}
+          <div class="tag-chips" class:capped={scopeTags.length >= TAG_FILTER_FROM}>
+            {#each shownTags as t (t.tag)}
+              {@const picked = cloudOwnsFilter && $selectedTags.has(t.tag)}
+              <button
+                type="button"
+                class="tag-pill"
+                class:active={picked}
+                aria-pressed={picked}
+                title="#{t.tag} · {t.count}"
+                onclick={() => selectTag(viewAccountId, t.tag)}
+                oncontextmenu={(e) => openTagMenu(e, viewAccountId, t.tag)}
+                use:longpress
+              >
+                <span class="pill-name">{t.tag}</span>
+                <span class="pill-count">{t.count}</span>
+              </button>
+            {:else}
+              <p class="tag-none">No tag contains “{tagFilter.trim()}”.</p>
+            {/each}
+          </div>
+        {/if}
+      {/if}
+    {/if}
+
+    {#each $activeAccounts as acct (acct.id)}
+      {@const name = accountNameBesideBackend(acct, $activeAccounts)}
+      {@const backend = backendLabel(acct.backend_kind ?? 'gmail')}
+      {@const collapsed = collapsedAccounts.has(acct.id)}
+      {@const allOpen = !$selectedSmartFolder && $selectedTags.size === 0 && $selectedFolder === '__ALL__' && $currentAccount === acct.id}
+      {@const dot = dotsByAccount[acct.id]}
+      {@const mark = dot ? accountHeaderMark(dot) : null}
+      {@const waiting = countsByAccount[acct.id]?.counts ? totalPending(countsByAccount[acct.id].counts!) : 0}
+      {@const foldersLocked = !canWrite($capabilitiesByAccount[acct.id], 'folders')}
+      {@const reconnect = reconnectKind(acct)}
+      <!-- data-account-id is the only thing that tells two sections apart
+           when two accounts share an address (gmail:a@b.com and
+           microsoft:a@b.com). The group's name is the account, so a screen
+           reader hears which account a folder belongs to. -->
+      <!-- data-backend picks the account's colour in looks that give accounts
+           one (a key, a line); data-suspended draws a signed-out or blocked
+           account's line broken. Lamplit uses neither. -->
+      <div
+        class="account-section"
+        class:current={acct.id === $currentAccount}
+        data-account-id={acct.id}
+        data-backend={acct.backend_kind ?? 'gmail'}
+        data-suspended={acct.blocked_reason ? 'true' : undefined}
+        role="group"
+        aria-label={backend ? `${name} · ${backend}` : name}
+      >
+        <!-- The account's own row (spec 2026-11-10 §2): it opens every note
+             in the account — the old "All <address>" row — and its chevron,
+             or ←/→, folds the account away. -->
+        <div
+          class="folder-item account-header"
+          class:active={allOpen}
+          aria-current={allOpen ? 'true' : undefined}
+          aria-expanded={!collapsed}
+          data-depth="-1"
+          role="button"
+          tabindex="-1"
+          title="All notes in {accountDisplay(acct)}"
+          onclick={() => selectFolder(acct.id, '__ALL__')}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFolder(acct.id, '__ALL__'); } }}
+          oncontextmenu={(e) => openAccountMenu(e, acct.id)}
+          use:longpress
+        >
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <span
+            class="expand-toggle"
+            aria-hidden="true"
+            onclick={(e) => { e.stopPropagation(); toggleAccountCollapsed(acct.id); }}
+          ><Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+          <span class="account-key" aria-hidden="true"></span>
+          <span class="account-name">{name}</span>
+          {#if acct.id === $currentAccount}<span class="sr-only">, current account</span>{/if}
+          {#if backend}
+            <span class="account-backend-tag">{backend}</span>
+          {/if}
+          {#if mark}
+            <!-- Only what needs the user (PRODUCT.md principle 2): nothing for
+                 synced, nothing while the first count is still on its way. -->
+            <!-- The segments are Field Instrument's sync meter: one lit per
+                 change waiting, up to eight. Other looks hide them and draw
+                 the ring. The text stays the mark's name either way. -->
+            <span class="account-mark" data-mark={mark} role="img" aria-label={dot.text} title={dot.text}>
+              {#if mark === 'waiting'}
+                {#each METER as i (i)}<span class="meter-seg" class:lit={i < waiting}></span>{/each}
+              {/if}
+            </span>
+          {/if}
+          {#if foldersLocked}
+            <span
+              class="account-lock"
+              role="img"
+              aria-label="Folders can't be changed from Jodd for this account"
+              title="Folders can't be changed from Jodd for this account"
+            ><Icon name="lock" size={12} /></span>
+          {/if}
+          <span class="folder-count">{accountTotals[acct.id] ?? 0}</span>
+        </div>
+        {#if acct.blocked_reason}
+          <!-- Under its account, in the tree, not in a panel the user has to
+               open: a signed-out account otherwise looks exactly like a
+               healthy one (spec 2026-11-10 §3). Signed out gets the short
+               form and the way back; any other reason (iCloud's Advanced
+               Data Protection) names a setting in Apple's UI, so it stays
+               whole. -->
+          <div class="account-notice danger" role="status" title={acct.blocked_reason}>
+            <span class="notice-text">{isSignedOut(acct) ? 'Signed out. Its notes and unsent changes are kept here.' : acct.blocked_reason}</span>
+            {#if reconnect}
+              <button type="button" class="notice-action" onclick={() => addAccount(reconnect)}>Sign in again</button>
+            {/if}
+          </div>
+        {/if}
+        {#if cleanupResult[acct.id]}
+          <p class="account-notice dup-pill result" role="status">{cleanupResult[acct.id]}</p>
+        {:else if ($dupStats[acct.id]?.collapsed ?? 0) > 0}
+          <div class="account-notice">
+            <span class="notice-text">{plural($dupStats[acct.id].collapsed, 'duplicate')} in Gmail</span>
+            <button
+              type="button"
+              class="notice-action dup-pill"
+              onclick={() => openReview(acct.id)}
+              title="{plural($dupStats[acct.id].collapsed, 'duplicate Gmail message')} across {plural($dupStats[acct.id].uuids_affected, 'note')}. Review which copies to move to Trash."
+            >Review</button>
+          </div>
+        {/if}
+        {#if !collapsed}
+        {#snippet folderRow(row: FolderRow, allRows: FolderRow[])}
+          {#if isRowVisible(row.path, expandedPaths)}
+            {@const hasKids = rowHasChildren(allRows, row.path)}
+            {@const isOpenRow = !$selectedSmartFolder && $selectedTags.size === 0 && $selectedFolder === row.path && $currentAccount === acct.id}
+            {@const blockReason = folderBlockReason($syncBlocks, acct.id, row.path)}
+            <div
+              class="folder-item"
+              class:active={isOpenRow}
+              aria-current={isOpenRow ? 'true' : undefined}
+              aria-expanded={hasKids ? !!expandedPaths[row.path] : undefined}
+              data-depth={row.depth}
+              style="--depth: {row.depth}"
+              role="button"
+              tabindex="-1"
+              onclick={() => selectFolder(acct.id, row.path)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFolder(acct.id, row.path); } }}
+              oncontextmenu={(e) => openFolderMenu(e, acct.id, row.path)}
+              use:longpress
+            >
+              {#if hasKids}
+                <!-- The pointer's way in. The keyboard's is → and ← on the row,
+                     which carries aria-expanded (navRows clicks this). -->
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <span
+                  class="expand-toggle"
+                  aria-hidden="true"
+                  onclick={(e) => toggleExpand(e, row.path)}
+                ><Icon name={expandedPaths[row.path] ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              {:else}
+                <span class="expand-toggle empty"></span>
+              {/if}
+              <span class="folder-icon"><Icon name="folder" /></span>
+              <span class="folder-name" title={stripWorkflowMarkers(row.name)}>{stripWorkflowMarkers(row.name)}</span>
+              {#if blockReason}
+                <!-- The backend refused this folder permanently and the worker
+                     stopped trying (gotcha #14). The reason as text, and Try
+                     again, live in NoteList's banner when the folder is open. -->
+                <span
+                  class="folder-blocked-indicator"
+                  role="img"
+                  aria-label={`Folder not synced — ${blockReason}`}
+                  title={`Not synced — ${blockReason}`}><Icon name="alert" size={14} /></span>
+              {/if}
+              {#if row.count > 0}<span class="folder-count">{row.count}</span>{/if}
+            </div>
+          {/if}
+        {/snippet}
+        {#if splitRowsByAccount[acct.id]}
+          {@const split = splitRowsByAccount[acct.id]}
+          <div class="folder-group">
+            {#each split.user as row (row.path)}
+              {@render folderRow(row, split.user)}
+            {/each}
+          </div>
+          {#if split.workflow.length > 0}
+            <div class="folder-group">
+              <!-- Agent folders (spec 2026-10-28 §6): written by agents, not by
+                   Jodd's own AI workflows, which file into Notes/Inbox. -->
+              <h4 class="group-header" title="Folders that AI agents write to"><span class="group-icon"><Icon name="person" size={13} /></span>Agents</h4>
+              {#each split.workflow as row (row.path)}
+                {@render folderRow(row, split.workflow)}
+              {/each}
+            </div>
+          {/if}
+        {/if}
+        <!-- The account's Recently Deleted, last in its tree as in Apple
+             Notes (spec 2026-11-12 §2). It reads the backend's own trash, so
+             it belongs to the account, not to the workspace Views. Gated on
+             backend_capabilities: Microsoft has no trash at all — a Graph
+             DELETE leaves no restore path — so that account has no row. -->
+        {#if shouldShowTrash($capabilitiesByAccount[acct.id])}
+          {@const open = !$selectedSmartFolder && $selectedTags.size === 0 && $selectedFolder === '__TRASH__' && $currentAccount === acct.id}
+          <!-- Its own group, as the Agents group is, so a look that draws the
+               account as a line (Midnight Line) puts this row's station on
+               that line rather than beside it. -->
+          <div class="folder-group">
+          <div
+            class="folder-item trash-row"
+            class:active={open}
+            aria-current={open ? 'true' : undefined}
+            role="button"
+            tabindex="-1"
+            data-view="trash"
+            data-depth="0"
+            style="--depth: 0"
+            onclick={() => selectFolder(acct.id, '__TRASH__')}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFolder(acct.id, '__TRASH__'); } }}
+          >
+            <span class="expand-toggle empty"></span>
+            <!-- Ink, not danger: this row goes to a place; it deletes nothing. -->
+            <span class="folder-icon"><Icon name="trash" inherit /></span>
+            <span class="folder-name">Recently Deleted</span>
+          </div>
+          </div>
+        {/if}
+        {/if}
+      </div>
+    {/each}
+  </nav>
+
+  <div class="sidebar-footer">
+    <button
+      bind:this={accountChipEl}
+      class="account-chip"
+      onclick={toggleAccountPanel}
+      title="Manage accounts"
+      aria-controls="sidebar-account-panel"
+      aria-expanded={accountPanelOpen}
+    >
+      <span
+        class="account-chip-dot"
+        data-state={chipDot.kind}
+        role="img"
+        aria-label={chipDot.text}
+        title={chipDot.text}
+      ></span>
+      <!-- The short name, as on the account's header; the full address is
+           its title (spec 2026-11-10 §2). -->
+      <span class="account-chip-email" title={accountDisplay(currentAcct, $currentAccount ?? 'No account')}>
+        {currentAcct ? chipName : 'No account'}
+      </span>
+      {#if currentAcct}
+        <span class="account-chip-backend">{backendLabel(currentAcct.backend_kind ?? 'gmail')}</span>
+      {/if}
+      <span class="account-chip-caret"><Icon name="chevron-down" size={12} /></span>
+    </button>
+
+    {#if accountPanelOpen}
+      <!-- A disclosure: a panel of controls (pick, settings, remove per
+           account), not a menu of commands — its rows hold three buttons
+           each, which a role="menu" may not. Esc and a click outside close
+           it (onWindowKey / onWindowPointerDown). -->
+      <div class="account-panel" id="sidebar-account-panel" role="group" aria-label="Accounts">
+        <div class="account-panel-header">Accounts</div>
+        {#each $activeAccounts as a (a.id)}
+          <div class="account-row" class:active={a.id === $currentAccount}>
+            <button
+              class="account-row-pick"
+              onclick={() => { currentAccount.set(a.id); navigateToFolder('Notes'); accountPanelOpen = false; dispatch('pick'); }}
+              title="Switch to {accountDisplay(a)}"
+            >
+              <span class="account-row-dot" class:on={a.id === $currentAccount} aria-hidden="true"></span>
+              {#if a.id === $currentAccount}<span class="sr-only">Current account:</span>{/if}
+              {#if a.backend_kind === 'local_fs'}<span class="account-row-kind-icon"><Icon name="folder" size={12} /></span>{/if}
+              <span class="account-row-email" title={accountDisplay(a)}>{accountNameBesideBackend(a, $activeAccounts)}</span>
+              {#if a.backend_kind}
+                <span class="account-row-backend">{backendLabel(a.backend_kind)}</span>
+              {/if}
+            </button>
+            <button
+              class="account-row-settings"
+              onclick={() => openSettings(a)}
+              title="Settings for {accountNameWithBackend(a, $activeAccounts)}"
+              aria-label="Settings for {accountNameWithBackend(a, $activeAccounts)}"
+            ><Icon name="gear" size={13} /></button>
+            <button
+              class="account-row-remove"
+              onclick={() => removeAccount(a)}
+              title="Remove {accountNameWithBackend(a, $activeAccounts)}"
+              aria-label="Remove {accountNameWithBackend(a, $activeAccounts)}"
+            ><Icon name="close" size={12} /></button>
+          </div>
+          {#if a.blocked_reason}
+            <!-- Its own row under the account, not a tooltip or a badge: the
+                 reason names a setting in Apple's own UI, and a message the
+                 user has to hover to find is a message they will not read.
+                 Backend-neutral by construction — the text is whatever the
+                 backend put in `blocked_reason`. -->
+            <p class="account-row-blocked" role="status">{a.blocked_reason}</p>
+          {/if}
+        {/each}
+        {#if dismissedAccounts.length > 0}
+          <button
+            type="button"
+            class="account-panel-header inactive-toggle"
+            onclick={() => (inactiveOpen = !inactiveOpen)}
+          >
+            <Icon name={inactiveOpen ? 'chevron-down' : 'chevron-right'} size={12} />
+            Inactive ({dismissedAccounts.length})
+          </button>
+          {#if inactiveOpen}
+            {#each dismissedAccounts as a (a.id)}
+              <div class="account-row dimmed">
+                <span class="account-row-email" title={accountDisplay(a)}>{accountDisplay(a)}</span>
+                {#if a.backend_kind}
+                  <span class="account-row-backend">{backendLabel(a.backend_kind)}</span>
+                {/if}
+                {#if a.status === 'draining'}
+                  <span class="account-row-note" class:warn={pendingError[a.id]}>
+                    {#if pendingError[a.id]}
+                      finishing sync — count unavailable
+                    {:else if pending[a.id] === undefined}
+                      finishing sync — … left
+                    {:else}
+                      finishing sync — {pending[a.id]} left
+                    {/if}
+                  </span>
+                  <button type="button" onclick={() => stopWaitingFor(a)}>Stop waiting</button>
+                  {#if a.pending_removal}
+                    <span class="account-row-note">removal queued</span>
+                  {:else}
+                    <button type="button" class="account-row-remove" onclick={() => removeAccount(a)}>Remove</button>
+                  {/if}
+                {:else}
+                  <button type="button" onclick={() => reactivate(a)}>Reactivate</button>
+                  <button type="button" class="account-row-remove" onclick={() => removeAccount(a)}>Remove</button>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        {/if}
+        <div class="sep"></div>
+        <button class="account-panel-action" onclick={() => addAccount('gmail')}>
+          <span class="icon"><Icon name="plus" /></span>
+          <span class="label">Add Gmail account</span>
+        </button>
+        <!-- Every platform, Android included: Microsoft redirects through the
+             same App Links URL Gmail uses (`auth_ms::redirect_uri`), so the
+             loopback listener that used to keep it off Android is no longer
+             the only way back into the app. -->
+        <button class="account-panel-action" onclick={() => addAccount('microsoft')}>
+          <span class="icon"><Icon name="plus" /></span>
+          <span class="label">Add Microsoft account</span>
+        </button>
+        {#if $supportsIcloud}
+          <!-- Every desktop platform, not just macOS: `data_store_identifier`
+               is Apple's isolation lever and `data_directory` is everyone
+               else's (icloud_auth's `isolated()`), measured identical on both
+               engines 2026-09-09. Android is the exclusion.
+
+               Its own flow (`addICloudAccount`), not the OAuth one: there is
+               no OAuth here at all — no url to open, no browser, no
+               redirect — so it shares none of that path beyond the name. -->
+          <button class="account-panel-action" onclick={() => addAccount('icloud')}>
+            <span class="icon"><Icon name="plus" /></span>
+            <span class="label">Add iCloud account</span>
+          </button>
+        {/if}
+        <button class="account-panel-action" onclick={() => addAccount('localfs')} disabled={$localFolderBusy}>
+          <span class="icon"><Icon name="folder" /></span>
+          <span class="label">Add Local Folder</span>
+        </button>
+        <!-- Managed SSH works on Android through the embedded russh client;
+             Advanced SSH needs the user's own ssh-agent / ~/.ssh/config,
+             which a phone does not have. -->
+        <button class="account-panel-action" onclick={() => addAccount('ssh')}>
+          <span class="icon"><Icon name="server" /></span>
+          <span class="label">Add SSH Server</span>
+        </button>
+        {#if !$isAndroid}
+          <button class="account-panel-action" onclick={() => addAccount('ssh_advanced')}>
+            <span class="icon"><Icon name="server" /></span>
+            <span class="label">Add SSH Server (advanced)</span>
+          </button>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="footer-row">
+      <!-- The AI menu: Ask Jodd, Make a note with AI, Studio, Organize
+           (AiMenu). Global, not per-account: each item acts on the current
+           account and view, as Ask's own scope selector always has. -->
+      <button
+        bind:this={aiMenuAnchor}
+        class="settings-gear"
+        onclick={toggleAiMenu}
+        title="Ask Jodd, make a note with AI, Studio and Organize"
+        aria-label="AI actions"
+        aria-haspopup="menu"
+        aria-expanded={aiMenuOpen}
+      ><Icon name="sparkle" size={14} /><span class="settings-gear-label" aria-hidden="true">AI</span></button>
+      <button
+        class="settings-gear"
+        onclick={() => settingsRoute.set('appearance')}
+        title="App settings"
+        aria-label="App settings"
+      ><Icon name="gear" size={14} /></button>
+      <button
+        class="version-label"
+        onclick={() => aboutModalOpen.set(true)}
+        title="About Jodd"
+      >
+        Jodd{appVersion ? ` v${appVersion}` : ''}
+      </button>
+    </div>
+  </div>
+</aside>
+{/if}
+
+<PromptDialogs bind:this={promptDialogs} bind:checkboxChecked={removeRevokeKey} />
+
+{#if aiMenuAnchor}
+  <Popover anchor={aiMenuAnchor} bind:open={aiMenuOpen} onclose={() => (aiMenuOpen = false)} label="AI">
+    <div class="ai-menu" role="menu" aria-label="AI actions">
+      <AiMenu run={runFromAiMenu} onorganize={(id) => (organizingAccount = id)} />
+    </div>
+  </Popover>
+{/if}
+
+{#if organizingAccount}
+  <CurateReview accountId={organizingAccount} onClose={() => (organizingAccount = null)} />
+{/if}
+
+{#if reviewingAccount}
+  <DupReviewModal
+    accountId={reviewingAccount}
+    onClose={closeReview}
+    onTrashed={(count) => onTrashed(reviewingAccount!, count)}
+  />
+{/if}
+
+{#snippet folderMenuItems(onPhone: boolean)}
+    <button role="menuitem" class="item" onclick={() => askAboutFolder(menuAccountId!, menuPath!)} disabled={askFolderGate.disabled}
+      title={askFolderGate.reason || 'Ask Jodd about the notes in this folder and its subfolders'}>
+      <span class="icon"><Icon name="chat" /></span>
+      <span class="label">Ask Jodd about this folder</span>
+    </button>
+    <!-- One reason line for the menu: hidden from AI is the only reason
+         either AI item here is disabled, and it is the same folder. -->
+    {#if askFolderGate.reason}<p class="menu-reason">{askFolderGate.reason}</p>{/if}
+    <div class="sep"></div>
+    {#if menuCanWriteNotes}
+    <button role="menuitem" class="item" onclick={() => newNoteInFolder(menuAccountId!, menuPath!)}>
+      <span class="icon"><Icon name="note-plus" /></span>
+      <span class="label">New note here</span>
+    </button>
+    {/if}
+    <!-- Research Studio (spec 2026-10-23 §3). Hidden where "New note here"
+         is, and disabled on a folder hidden from AI — Studio's backend
+         refuses one, so offering it only led to a refusal. -->
+    {#if studioGate.show}
+    <button role="menuitem" class="item" onclick={() => generateFromFolder(menuAccountId!, menuPath!)} disabled={studioGate.disabled}
+      title={studioGate.reason || 'Generate a briefing, FAQ, timeline and more from this folder’s notes'}>
+      <span class="icon"><Icon name="sparkle" /></span>
+      <span class="label">Generate with Studio…</span>
+    </button>
+    {/if}
+    <!-- Claude Code runs only on desktop. The backend refuses a folder an
+         agent may write; the dialog shows that refusal. -->
+    {#if !$isAndroid && menuPath !== 'Notes'}
+    <button role="menuitem" class="item" onclick={() => publishFolderAsSkill(menuAccountId!, menuPath!)} disabled={skillGate.disabled}
+      title={skillGate.reason || 'Let Claude Code follow this folder’s notes as a skill'}>
+      <span class="icon"><Icon name="sparkle" /></span>
+      <span class="label">Publish as Claude Code skill…</span>
+    </button>
+    {/if}
+    {#if menuCanWriteFolders}
+    <div class="sep"></div>
+    <button role="menuitem" class="item" onclick={() => createFolderUnder(menuAccountId!, menuPath)}>
+      <span class="icon"><Icon name="plus" /></span>
+      <span class="label">New sub-folder</span>
+    </button>
+    {/if}
+    {#if menuCanWriteFolders && menuPath !== 'Notes' && !isProtectedAgentFolder(folderKindsByAccount[menuAccountId!] ?? {}, menuPath!)}
+      <button role="menuitem" class="item" onclick={() => renameFolder(menuAccountId!, menuPath!)}>
+        <span class="icon"><Icon name="pencil" /></span>
+        <span class="label">Rename</span>
+      </button>
+      <!-- Delete grouped with the other direct actions above, rather than
+           isolated after "Move to" — a browsable folder list, not a single
+           action, so it sits last. Mirrors NoteContextMenu's ordering. -->
+      <!-- Anchored menu keeps Delete before "Move to"; the phone sheet puts
+           Delete last (ruling R17), below. -->
+      {#if !onPhone}
+      <div class="sep"></div>
+      <button role="menuitem" class="item danger" onclick={() => deleteFolder(menuAccountId!, menuPath!)} disabled={menuHasSubfolders}>
+        <span class="icon"><Icon name="trash" /></span>
+        <span class="label">Delete</span>
+      </button>
+      {#if menuHasSubfolders}<p class="menu-reason">Delete or move its folders first.</p>{/if}
+      <div class="sep"></div>
+      {/if}
+      <!-- Hover flyout, not an inline list — matches NoteContextMenu's
+           "Move to" exactly (same .submenu-anchor/.submenu/fitSubmenu
+           mechanism). Folders skip the account-picker layer notes have
+           because a folder can only move within its own account. -->
+      {#if onPhone}
+        <button role="menuitem" class="item has-submenu" type="button" onclick={() => (folderSheetLevel = 'move')}>
+          <span class="icon"><Icon name="folder" /></span>
+          <span class="label">Move to</span>
+          <span class="chevron"><Icon name="chevron-right" size={12} /></span>
+        </button>
+      {:else}
+      <div class="submenu-anchor" class:open={moveOpen} role="none" onmouseenter={fitSubmenu}>
+        <button
+          role="menuitem"
+          class="item has-submenu"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={moveOpen}
+          onclick={(e) => { moveOpen = !moveOpen; fitSubmenuAt((e.currentTarget as HTMLElement).parentElement!); }}
+        >
+          <span class="icon"><Icon name="folder" /></span>
+          <span class="label">Move to</span>
+          <span class="chevron"><Icon name="chevron-right" size={12} /></span>
+        </button>
+        <div class="submenu folder-list" role="menu" aria-label="Move to">
+          {#each (rowsByAccount[menuAccountId!] ?? [])
+            .map((r) => ({ ...r, _state: moveTargetState(menuPath!, r.path, folderKindsByAccount[menuAccountId!] ?? {}) }))
+            .filter((r) => r._state !== 'hide') as r (r.path)}
+            <button
+              role="menuitem"
+              class="item folder"
+              class:current-location={r._state === 'parent'}
+              style="padding-left: calc(var(--space-6) + {r.depth} * var(--space-3))"
+              onclick={() => r._state === 'valid' && moveFolderTo(menuAccountId!, menuPath!, r.path)}
+              disabled={r._state === 'parent'}
+              title={r._state === 'parent' ? `${r.path} — folder is already here` : r.path}
+              type="button"
+            >
+              <span class="label">{stripWorkflowMarkers(r.name)}</span>
+              {#if r._state === 'parent'}
+                <span class="here-tag">(current)</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+      {/if}
+      {#if onPhone}
+      <div class="sep"></div>
+      <button role="menuitem" class="item danger" onclick={() => deleteFolder(menuAccountId!, menuPath!)} disabled={menuHasSubfolders}>
+        <span class="icon"><Icon name="trash" /></span>
+        <span class="label">Delete</span>
+      </button>
+      {#if menuHasSubfolders}<p class="menu-reason">Delete or move its folders first.</p>{/if}
+      {/if}
+    {:else if !menuCanWriteFolders && menuPath !== 'Notes'}
+      <!-- Folder writes unavailable (Microsoft): an ordinary folder from the
+           user's own Exchange mailbox, not a Jodd-managed workflow folder, so
+           it must not be labeled as one. Permanent, not a gap: Graph cannot
+           create an IPF.StickyNote container (docs/BACKEND-MICROSOFT.md), so
+           the line must not promise that it will come. -->
+      <div class="sep"></div>
+      <p class="menu-reason">Outlook folders can't be renamed, moved or deleted from Jodd.</p>
+    {:else if menuPath !== 'Notes'}
+      <!-- An agent folder (isProtectedAgentFolder): agents write here — the
+           agent workspace's `__Agent__`, or the folder jodd-mcp's allowlist
+           names (`__Claude__`). Rename/Move/Delete are hidden because the
+           allowlist names it: renaming or moving it would cut it off from
+           the agents. New note and New sub-folder stay: the user may file
+           into it. -->
+      <div class="sep"></div>
+      <p class="menu-reason">Agent folder: agents write here, so it can't be renamed or moved.</p>
+    {/if}
+    <!-- The row's alert icon, said in words: a tooltip never shows on touch.
+         The full banner, with Try again, is NoteList's when the folder is
+         open. -->
+    {#if menuBlockReason}
+      <div class="sep"></div>
+      <p class="menu-reason">Not synced: {menuBlockReason}</p>
+    {/if}
+{/snippet}
+
+{#if menuPath !== null && menuAccountId !== null}
+  {#if phoneSheet}
+    <Modal
+      bind:this={folderSheet}
+      phone="sheet"
+      title={folderSheetTitle}
+      onclose={clearFolderMenu}
+    >
+      <div class="sheet-menu" role="menu">
+        {#if folderSheetLevel === 'move'}
+          <button role="menuitem" class="item back-row" type="button" onclick={() => (folderSheetLevel = 'root')}>
+            <span class="icon"><Icon name="chevron-left" /></span>
+            <span class="label">Back</span>
+          </button>
+          <div class="sep"></div>
+          {#each (rowsByAccount[menuAccountId!] ?? [])
+            .map((r) => ({ ...r, _state: moveTargetState(menuPath!, r.path, folderKindsByAccount[menuAccountId!] ?? {}) }))
+            .filter((r) => r._state !== 'hide') as r (r.path)}
+            <button
+              role="menuitem"
+              class="item folder"
+              class:current-location={r._state === 'parent'}
+              style="padding-left: calc(var(--space-6) + {r.depth} * var(--space-4))"
+              onclick={() => r._state === 'valid' && moveFolderTo(menuAccountId!, menuPath!, r.path)}
+              disabled={r._state === 'parent'}
+              title={r._state === 'parent' ? `${r.path} — folder is already here` : r.path}
+              type="button"
+            >
+              <span class="label">{stripWorkflowMarkers(r.name)}</span>
+              {#if r._state === 'parent'}
+                <span class="here-tag">(current)</span>
+              {/if}
+            </button>
+          {/each}
+        {:else}
+          {@render folderMenuItems(true)}
+        {/if}
+      </div>
+    </Modal>
+  {:else}
+    <div
+      bind:this={menuEl}
+      class="folder-menu"
+      style="left: {menuAdjustedX}px; top: {menuAdjustedY}px"
+      role="menu"
+      aria-label="{folderSheetTitle} folder"
+      tabindex="-1"
+      use:menuKeys={{ onclose: () => closeFolderMenu() }}
+    >
+      {@render folderMenuItems(false)}
+    </div>
+  {/if}
+{/if}
+
+{#snippet accountMenuItems(accountId: string)}
+    <button role="menuitem" class="item" onclick={() => askAbout({ kind: 'account', account_id: accountId })}
+      title="Ask Jodd about the notes in this account">
+      <span class="icon"><Icon name="chat" /></span>
+      <span class="label">Ask Jodd about this account</span>
+    </button>
+    <!-- Make a note with AI, filed in this account (spec 2026-10-28 §5.3):
+         the account header's old ✦ button moved here. Hidden where the
+         account cannot write notes (controllers/aiActions.ts). -->
+    {#if aiGate({ canWrite: canWrite($capabilitiesByAccount[accountId], 'notes'), hidden: false }).show}
+    <button role="menuitem" class="item" onclick={() => makeNoteIn(accountId)}
+      title="Make a note with AI, filed in this account">
+      <span class="icon"><Icon name="sparkle" /></span>
+      <span class="label">Make a note with AI in this account…</span>
+    </button>
+    {/if}
+    <!-- The header's lock, said in words: a tooltip never shows on touch. -->
+    {#if !canWrite($capabilitiesByAccount[accountId], 'folders')}
+    <div class="sep"></div>
+    <p class="menu-reason">Folders can't be created, renamed or moved from Jodd in this account.</p>
+    {/if}
+{/snippet}
+
+{#if accountMenuId !== null}
+  {#if phoneSheet}
+    <Modal bind:this={accountSheet} phone="sheet" title={accountSheetTitle} onclose={clearAccountMenu}>
+      <div class="sheet-menu" role="menu">
+        {@render accountMenuItems(accountMenuId)}
+      </div>
+    </Modal>
+  {:else}
+    <div
+      bind:this={accountMenuEl}
+      class="folder-menu account-menu"
+      style="left: {accountMenuX}px; top: {accountMenuY}px"
+      role="menu"
+      aria-label={accountSheetTitle}
+      tabindex="-1"
+      use:menuKeys={{ onclose: () => closeAccountMenu() }}
+    >
+      {@render accountMenuItems(accountMenuId)}
+    </div>
+  {/if}
+{/if}
+
+<!-- Tag context menu — Rename / Delete operate across every note in the
+     account. Reuses .folder-menu styling. -->
+{#snippet tagMenuItems()}
+    {#if tagMenuAccountId === ALL_ACCOUNTS}
+    <p class="menu-reason">Pick an account in For to rename or delete this tag.</p>
+    {:else if tagMenuCanWriteSidecars}
+    <button role="menuitem" class="item" onclick={() => renameTag(tagMenuAccountId!, tagMenuName!)}>
+      <span class="icon"><Icon name="pencil" /></span>
+      <span class="label">Rename tag</span>
+    </button>
+    <button role="menuitem" class="item danger" onclick={() => deleteTag(tagMenuAccountId!, tagMenuName!)}>
+      <span class="icon"><Icon name="trash" /></span>
+      <span class="label">Delete tag</span>
+    </button>
+    {:else}
+    <p class="menu-reason">Tags can't be renamed or deleted in this account from Jodd.</p>
+    {/if}
+{/snippet}
+
+{#if tagMenuName !== null && tagMenuAccountId !== null && !phoneSheet}
+    <div
+      bind:this={tagMenuEl}
+      class="folder-menu"
+      style="left: {tagMenuAdjustedX}px; top: {tagMenuAdjustedY}px;"
+      role="menu"
+      aria-label="#{tagMenuName}"
+      tabindex="-1"
+      use:menuKeys={{ onclose: () => closeTagMenu() }}
+    >
+      <div class="item header" aria-hidden="true">#{tagMenuName}</div>
+      {@render tagMenuItems()}
+    </div>
+{/if}
+
+<style>
+  /* Folder/Workflow group split (Task 16). Workflow group only renders
+     when the account has at least one system_workflow folder. */
+  .folder-group {
+    margin-bottom: 4px;
+  }
+  /* DESIGN.md's Section Label: 700, uppercase, 0.04em. */
+  .group-header {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    font-size: var(--size-xs);
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: var(--space-2) var(--space-2) var(--space-0-5) var(--space-3);
+    font-weight: var(--weight-bold);
+    letter-spacing: 0.04em;
+    line-height: var(--leading-tight);
+  }
+  .group-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: var(--space-1);
+  }
+
+  .sidebar {
+    /* width is set inline by the parent (App.svelte) so it can be resized */
+    background: var(--surface-sidebar);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    /* On the phone layout Sidebar renders bare, full-screen, as the Folders
+       pane (App.svelte mounts it with no .phone-pane-header wrapper there) —
+       so THIS is the surface that needs status-bar clearance, not
+       .phone-pane-header (which never renders for this pane). Same pattern
+       as .phone-pane-header's own fix: max() keeps the existing 20px as a
+       floor on desktop/tablet, where the inset is 0. */
+    padding: max(20px, env(safe-area-inset-top)) 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Under the tablet top bar: TabletChrome's .tablet-pane-header padding,
+     min-height and box-sizing, so the two headers share one row. */
+  .sidebar-header.tablet-bar {
+    padding: max(var(--space-2), env(safe-area-inset-top)) var(--space-3) var(--space-2);
+    min-height: var(--touch-target);
+    box-sizing: content-box;
+  }
+
+  .app-title {
+    font-size: var(--size);
+    font-weight: var(--weight-bold);
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  /* The desktop hit area (DESIGN.md: 28px), the icon unchanged. */
+  .new-folder-btn {
+    width: var(--hit-target-desktop);
+    height: var(--hit-target-desktop);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0;
+  }
+
+  .new-folder-btn:hover {
+    background: var(--surface-active);
+    color: var(--text);
+  }
+
+  .folder-list {
+    flex: 1;
+    overflow: auto;
+    padding: 4px 0;
+  }
+
+  .account-section {
+    margin-top: var(--space-3);
+  }
+
+  /* The account's own row (spec 2026-11-10 §2): a .folder-item, so it is a
+     navRows row with the lamp when its "All" view is open. Secondary ink
+     unless it is the current account, the one Views, Tags and + act on. */
+  .folder-item.account-header {
+    padding-left: var(--space-2);
+  }
+  /* The name keeps its letters before anything else gives way: the backend
+     tag ellipsizes first, so a header carrying a tag, a mark, a lock and a
+     count no longer reads "kai…" (2026-11-12 critique). */
+  .account-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: var(--size-sm);
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .account-section.current .account-name {
+    color: var(--text);
+  }
+  /* The header's count sits at the row's far end, as a folder's does. */
+  .account-header .folder-count {
+    margin-left: auto;
+  }
+
+  /* Only what needs the user: a refused change or a lost sign-in (filled,
+     danger), or changes still waiting (a hollow ring in muted ink). Never
+     colour alone — the mark carries its text as its name and title. */
+  .account-mark {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+  .account-mark[data-mark='alert'] {
+    background: var(--danger);
+  }
+  .account-mark[data-mark='waiting'] {
+    border: 1.5px solid var(--text-muted);
+  }
+
+  /* ---- Looks (src/styles/looks/, src/lib/theme.ts) ------------------- *
+   * A look recolours this pane through the tokens alone, plus at most one
+   * signature move, below. Lamplit Desk draws none of these. */
+
+  /* The account's colour, in looks that give accounts one. */
+  .account-section[data-backend='icloud'] { --account-line: var(--account-icloud); }
+  .account-section[data-backend='gmail'] { --account-line: var(--account-gmail); }
+  .account-section[data-backend='microsoft'] { --account-line: var(--account-microsoft); }
+  /* The selector is the backend_kind as Rust serializes it (snake_case:
+     `local_fs`); the token keeps its own name. tokens.test.ts holds both. */
+  .account-section[data-backend='local_fs'] { --account-line: var(--account-localfs); }
+  .account-section[data-backend='ssh'] { --account-line: var(--account-ssh); }
+  .account-key,
+  .meter-seg {
+    display: none;
+  }
+
+  /* Field Instrument: a key-coloured square per account, and the segmented
+     sync meter in place of the ring — one lit segment per change waiting.
+     Lit is Signal Orange as a mark (--accent-mark, 3:1 on a selected row);
+     a refused change or a lost sign-in is one taller segment in danger. */
+  :global(:root[data-look='instrument']) .account-key {
+    display: block;
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-sm);
+    background: var(--account-line);
+  }
+  :global(:root[data-look='instrument']) .account-mark[data-mark='waiting'] {
+    display: inline-flex;
+    /* Half the smallest step: eight segments in 23px, so the meter never
+       takes the account name's room in a narrow sidebar. */
+    gap: calc(var(--space-0-5) / 2);
+    width: auto;
+    height: auto;
+    border: none;
+    border-radius: 0;
+  }
+  :global(:root[data-look='instrument']) .meter-seg {
+    display: block;
+    width: 2px;
+    height: 8px;
+    background: var(--border-strong);
+  }
+  :global(:root[data-look='instrument']) .meter-seg.lit {
+    background: var(--accent-mark);
+  }
+  :global(:root[data-look='instrument']) .account-mark[data-mark='alert'] {
+    width: 4px;
+    height: 10px;
+    border-radius: 0;
+  }
+
+  /* Midnight Line: each account is a line in its colour, its folders are
+     stations on it, and the open folder is the lit station. The line runs
+     down each folder group at a fixed x; every station sits on it whatever
+     the folder's depth (the name's indent still shows depth), a child's
+     station smaller. A signed-out or blocked account's line is broken. */
+  :global(:root[data-look='midnight']) .account-key {
+    display: block;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 4px;
+    border-radius: var(--radius-sm);
+    background: var(--account-line);
+  }
+  :global(:root[data-look='midnight']) .account-section > .folder-group {
+    position: relative;
+  }
+  :global(:root[data-look='midnight']) .account-section > .folder-group::before {
+    content: '';
+    position: absolute;
+    left: var(--space-4);
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--account-line);
+  }
+  :global(:root[data-look='midnight']) .account-section[data-suspended] > .folder-group::before {
+    background: repeating-linear-gradient(to bottom, var(--account-line) 0 6px, transparent 6px 10px);
+  }
+  /* Centred on the line: the row is inset one --space-1 from the group, and
+     the line's centre is 1.5px into its 3px. */
+  :global(:root[data-look='midnight']) .account-section .folder-item:not(.account-header)::before {
+    content: '';
+    position: absolute;
+    left: calc(var(--space-3) + 1.5px);
+    top: 50%;
+    bottom: auto;
+    width: 9px;
+    height: 9px;
+    transform: translate(-50%, -50%);
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid var(--account-line);
+    background: var(--surface-sidebar);
+  }
+  :global(:root[data-look='midnight']) .account-section .folder-item:not(.account-header):not([data-depth='0'])::before {
+    width: 7px;
+    height: 7px;
+  }
+  :global(:root[data-look='midnight']) .account-section .folder-item.active:not(.account-header)::before {
+    width: 13px;
+    height: 13px;
+    border-width: 3px;
+    background: var(--accent-mark);
+  }
+
+  /* Slate Ink: selection by inversion — the open row is ink with paper text,
+     not a rail over an overlay. E-paper does not fade: the row switches. */
+  :global(:root[data-look='slate']) .folder-item {
+    transition: none;
+  }
+  :global(:root[data-look='slate']) .folder-item.active {
+    background: var(--text);
+    /* Icon.svelte's semantic colours are ink in Slate, the inverted row's own
+       colour, so on it they turn to paper. */
+    --icon-pin: var(--text-inverse);
+    --icon-tag: var(--text-inverse);
+    --icon-danger: var(--text-inverse);
+  }
+  :global(:root[data-look='slate']) .folder-item.active::before {
+    display: none;
+  }
+  :global(:root[data-look='slate']) .folder-item.active .folder-name,
+  :global(:root[data-look='slate']) .folder-item.active .folder-icon,
+  :global(:root[data-look='slate']) .folder-item.active .expand-toggle,
+  :global(:root[data-look='slate']) .folder-item.active .account-name,
+  :global(:root[data-look='slate']) .folder-item.active .account-backend-tag,
+  :global(:root[data-look='slate']) .folder-item.active .account-lock,
+  :global(:root[data-look='slate']) .folder-item.active .folder-blocked-indicator {
+    color: var(--text-inverse);
+  }
+  :global(:root[data-look='slate']) .folder-item.active .expand-toggle:not(.empty):hover {
+    background: none;
+  }
+  :global(:root[data-look='slate']) .folder-item.active .account-mark[data-mark='waiting'] {
+    border-color: var(--text-inverse);
+  }
+  :global(:root[data-look='slate']) .folder-item.active .account-mark[data-mark='alert'] {
+    background: var(--text-inverse);
+  }
+  .account-lock {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    color: var(--text-muted);
+  }
+
+  /* A notice under its account: the sign-in it lost, a block, duplicates.
+     Wraps: a sentence cut to one line loses the half that says what to do. */
+  .account-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-2);
+    margin: 0 var(--space-2) var(--space-1) calc(var(--space-2) + 24px);
+    font-size: var(--size-xs);
+    line-height: var(--leading);
+    color: var(--text-secondary);
+  }
+  .account-notice.danger {
+    color: var(--danger);
+  }
+  .notice-text {
+    min-width: 0;
+  }
+  .notice-action {
+    font: inherit;
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+    background: var(--surface-badge);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-1-5);
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease-out);
+  }
+  /* Opaque in both states (The Overlaid Contrast Rule): the border moves,
+     not a translucent wash. */
+  .notice-action:hover {
+    border-color: var(--text-muted);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .account-row-kind-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+    margin-right: 1px;
+  }
+
+  /* Named unconditionally beside the address, not only on collision —
+     Account.id is now `{backend}:{email}`, so two accounts CAN share an
+     address on different backends and the address alone can't tell them
+     apart. Muted: informational, not interactive. */
+  .account-backend-tag,
+  .account-chip-backend,
+  .account-row-backend {
+    font-size: var(--size-xs);
+    color: var(--text-muted);
+    background: var(--surface-badge);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-1);
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .account-backend-tag {
+    /* Gives way ten times faster than the name beside it. */
+    flex: 0 10 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The duplicates notice's Review button is a .notice-action: neutral, not
+     the selected-chip amber it used to borrow, which the Meaningful Colour
+     Rule keeps for selection. The result line after a cleanup is quiet. */
+  .dup-pill.result {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .folder-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* Was `width: max-content` + `min-width: calc(100% - 8px)`, which let a long
+       name extend the row past the pane so .folder-list scrolled horizontally
+       rather than truncating. Two problems in practice:
+         1. On macOS the scrollbar is an overlay that stays hidden until you
+            actually scroll, so the only affordance saying "there is more text"
+            was invisible — the name just ran under the right border mid-word.
+         2. Scrolling a *tree* sideways hides the left edge, which is where the
+            indentation, disclosure arrow and icon live — i.e. it hides the
+            hierarchy, the one thing the tree exists to show.
+       The account header (.account-email) already truncated with an ellipsis,
+       so folder rows were also inconsistent with the pane above them. Now both
+       ellipsize, and the full name stays reachable via the title tooltip. */
+    width: calc(100% - var(--space-2));
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    border-radius: var(--radius);
+    margin: 0 4px;
+    transition: background var(--dur-fast) var(--ease-out);
+    position: relative;
+  }
+
+  /* A folder sits one step in from its account's row, and a step further
+     per level (--depth, set on the row). */
+  .folder-item[data-depth]:not(.account-header) {
+    padding-left: calc(var(--space-2) + (var(--depth, 0) + 1) * var(--space-3));
+  }
+
+  .folder-item:hover {
+    background: var(--surface-hover);
+  }
+
+  .folder-item.active {
+    background: var(--surface-active);
+  }
+
+  /* The lamp (DESIGN.md, The Lamp Marks Here Rule): the open folder carries
+     the same short Lamp Mark rail as the open note, inside the row's rounded
+     edge. 3:1 against this row at worst; Lamp Amber would not be. */
+  .folder-item.active::before {
+    content: '';
+    position: absolute;
+    left: var(--space-0-5);
+    top: var(--space-2);
+    bottom: var(--space-2);
+    width: 3px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-mark);
+  }
+
+  .folder-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    font-size: var(--size-md);
+  }
+
+  .folder-name {
+    flex: 1;
+    /* min-width: 0 is load-bearing: a flex item defaults to min-width: auto,
+       which refuses to shrink below its own content, so the ellipsis would
+       never trigger and the row would just overflow again. */
+    min-width: 0;
+    font-size: var(--size);
+    line-height: var(--leading);
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .expand-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    font-size: var(--size-md);
+    line-height: var(--leading-tight);
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+    user-select: none;
+  }
+
+  .expand-toggle:not(.empty):hover {
+    background: var(--surface-active);
+    color: var(--text);
+  }
+
+  /* Same badge NoteList puts on a note whose push was refused. */
+  .folder-blocked-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    /* A drawn alert icon now, not a `!` on a wash (spec 2026-11-10). */
+    margin-left: var(--space-1);
+    color: var(--danger);
+  }
+
+  .folder-count {
+    font-size: var(--size-xs);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    /* Opaque, not black-at-8%. This badge sits inside .folder-item, whose
+       own background darkens on hover (0.06) and again when active (0.10), so
+       an alpha badge composited THREE layers deep: on a selected row the count
+       ended up as #696969 on #c7c3ba = 3.08:1, well under AA, and the darker
+       the row got the worse it read. An opaque badge makes the ratio
+       independent of row state — 5.44:1 everywhere. */
+    background: var(--surface-badge);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* The Tags header row: its toggle, then the filter's controls. Styled as
+     a Section Label, like .group-header (DESIGN.md: 700, 0.04em). */
+  .tags-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    margin: var(--space-2) var(--space-2) var(--space-0-5);
+  }
+  .tags-toggle,
+  .views-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    /* The desktop hit area (DESIGN.md: 28px). */
+    min-height: var(--hit-target-desktop);
+    padding: 0 var(--space-1);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: var(--size-xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: 0.04em;
+    line-height: var(--leading-tight);
+    text-transform: uppercase;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .tags-toggle:hover,
+  .views-toggle:hover {
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+  }
+  .tags-caret { display: inline-flex; align-items: center; justify-content: center; }
+  /* The Views header is a Tags-style toggle, lined up with the Tags one. */
+  .views-header { margin: var(--space-1) var(--space-2) 0; }
+  .tags-num {
+    font-size: var(--size-xs);
+    color: var(--text-muted);
+    /* Opaque for the same reason as .folder-count — see that rule. */
+    background: var(--surface-badge);
+    padding: 0 5px;
+    border-radius: var(--radius-sm);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: var(--space-1);
+    padding: var(--space-0-5) var(--space-3) var(--space-2) var(--space-4);
+  }
+  /* A long cloud scrolls inside about six lines of pills, so the accounts
+     below stay in the column (spec 2026-11-12 §4). */
+  .tag-chips.capped {
+    max-height: calc(6 * (var(--size-xs) * var(--leading) + var(--space-1) * 2));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin-bottom: var(--space-1);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .tag-none {
+    margin: 0;
+    font-size: var(--size-xs);
+    line-height: var(--leading);
+    color: var(--text-muted);
+  }
+  .tag-filter {
+    padding: var(--space-0-5) var(--space-3) var(--space-1) var(--space-4);
+  }
+  /* DESIGN.md's input: an explicit themed background; focus is the app's
+     shared :focus-visible ring (App.svelte). */
+  .tag-filter-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--hit-target-desktop);
+    padding: var(--space-1) var(--space-2);
+    font: inherit;
+    font-size: var(--size-sm);
+    line-height: var(--leading);
+    color: var(--text);
+    background: var(--surface-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .tag-filter-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    border: none;
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    font-size: var(--size-xs);
+    font-family: inherit;
+    padding: 2px 4px 2px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    line-height: var(--leading);
+  }
+  .tag-pill:hover { background: var(--surface-active); }
+  .tag-pill.active { background: var(--accent-tint); color: var(--accent-on-tint); }
+  .pill-name {
+    line-height: var(--leading);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 110px;
+  }
+  .pill-count {
+    font-size: var(--size-xs);
+    /* Same opaque-badge treatment as .folder-count, and no opacity. The old
+       `opacity: 0.7` over a doubly-composited alpha background put this at
+       2.77:1 on a resting pill — fading text is the most expensive way to
+       de-emphasise something, because it costs contrast directly. The smaller
+       font size already does that job. */
+    background: var(--surface-badge);
+    border-radius: var(--radius-sm);
+    padding: 0 5px;
+  }
+
+  .tag-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  /* The filter's two controls: plain words, neutral. Amber is for the
+     selected tags themselves; red is for failures, never for Clear. */
+  .tag-mode,
+  .tag-clear {
+    font: inherit;
+    font-size: var(--size-xs);
+    line-height: var(--leading-tight);
+    color: var(--text-secondary);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-0-5) var(--space-1-5);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .tag-clear {
+    border-color: transparent;
+  }
+  .tag-mode:hover,
+  .tag-clear:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .sidebar-footer {
+    position: relative;
+    padding: 8px 10px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 2px;
+    /* Reserve space above Android's gesture nav bar so Ask Jodd / App
+       settings / About stay tappable (reported on-device via screenshot,
+       Galaxy S23 FE: this row sat behind the 3-button nav bar). .sidebar is
+       height: 100dvh, which on Android does not itself reserve nav-bar space
+       the way env(safe-area-inset-bottom) does. No `max()` floor here —
+       .footer-row had no pre-existing bottom padding, so an artificial
+       minimum (e.g. max(8px, ...)) would add visible padding on desktop
+       too, where the inset is 0. Plain env() resolves to exactly 0 there,
+       an honest no-op; on Android it adds exactly the real inset, which is
+       already the nav bar's height (no extra cushion needed on top of it). */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .settings-gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: var(--size);
+    gap: var(--space-1);
+    padding: var(--space-0-5) var(--space-1);
+    line-height: var(--leading-tight);
+    flex-shrink: 0;
+  }
+  .settings-gear-label {
+    font-size: var(--size-xs);
+    font-weight: var(--weight-semibold);
+  }
+  .settings-gear:hover { color: var(--text-secondary); }
+  .version-label {
+    display: block;
+    text-align: center;
+    padding: 4px 0;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: var(--size-xs);
+    cursor: pointer;
+  }
+  .version-label:hover { color: var(--text-secondary); text-decoration: underline; }
+
+  .account-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-family: inherit;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .account-chip:hover {
+    background: var(--surface-hover);
+  }
+
+  /* A drawn dot, not a ● in the user's font (DESIGN.md: no text glyphs as
+     icons). Pending is a muted ring like the account header's: amber means
+     the user touched it, and a queue draining on its own is not that. */
+  .account-chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-sizing: border-box;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .account-chip-dot[data-state='synced'] {
+    background: var(--success);
+  }
+  .account-chip-dot[data-state='pending'] {
+    background: none;
+    border: 1.5px solid var(--text-muted);
+  }
+  .account-chip-dot[data-state='blocked'],
+  .account-chip-dot[data-state='signed-out'] {
+    background: var(--danger);
+  }
+
+  .account-chip-email {
+    flex: 1;
+    font-size: var(--size-sm);
+    line-height: var(--leading);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .account-chip-caret {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .account-panel {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 8px;
+    right: 8px;
+    background: var(--surface-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-menu-up);
+    padding: 4px;
+    z-index: var(--z-drawer);
+    font-size: var(--size);
+  }
+
+  /* DESIGN.md's Section Label: 700, uppercase, 0.04em. */
+  .account-panel-header {
+    font-size: var(--size-xs);
+    font-weight: var(--weight-bold);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: var(--leading);
+    padding: var(--space-1-5) var(--space-2) var(--space-1);
+  }
+
+  .account-row {
+    display: flex;
+    align-items: stretch;
+  }
+
+  /* The open account, the way an open row is marked everywhere else: the
+     active surface, not an amber wash (amber means touched). */
+  .account-row.active {
+    background: var(--surface-active);
+    border-radius: var(--radius-sm);
+  }
+
+  /* Tight on purpose: the panel is as wide as the column, and the two row
+     buttons keep their width even while hidden, so every pixel of padding
+     came out of the account's name. */
+  .account-row-pick {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    padding: var(--space-1-5) var(--space-1-5) var(--space-1-5) var(--space-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    min-width: 0;
+  }
+
+  .account-row-pick:hover {
+    background: var(--surface-sunken);
+  }
+
+  /* --accent-action, not --accent: this dot's colour IS text (WCAG 1.4.11
+     applies), and tokens.css reserves --accent for fills/tints/borders with
+     no text on them -- --accent measured 2.77:1 here, failing the 3:1 floor
+     for an informational non-text indicator. Not --focus either: this dot
+     means "this is the active account", which is state the user reads, so
+     it earns the brand colour; focus blue is reserved for where keyboard
+     focus actually is. */
+  .account-row-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-sizing: border-box;
+    border: 1.5px solid var(--text-muted);
+    flex-shrink: 0;
+  }
+  .account-row-dot.on {
+    background: var(--text-secondary);
+    border-color: var(--text-secondary);
+  }
+
+  .account-row-email {
+    flex: 1;
+    font-size: var(--size-sm);
+    line-height: var(--leading);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .account-row-remove,
+  .account-row-settings {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-6);
+    background: none;
+    border: none;
+    font-size: var(--size);
+    cursor: pointer;
+    /* Visible by default, and hidden only below where a pointer can reveal
+       them again. The hiding used to live here, unconditionally, and a touch
+       screen has no hover to undo it — so on Android both controls were
+       invisible for good. `opacity: 0` hides paint and not hit-testing, which
+       made the worse half: a live Remove-account button nobody could see, in a
+       fixed spot at the end of every row.
+
+       Stated in this direction on purpose. If `hover: hover` is ever
+       unsupported or mis-evaluated, the fallback is a visible button rather
+       than an invisible destructive one — the failure that costs a user an
+       account is the one worth designing against. */
+    opacity: 1;
+    transition: opacity var(--dur-fast) var(--ease-out);
+    border-radius: var(--radius-sm);
+  }
+  .account-row-remove { color: var(--danger); font-size: var(--size-sm); }
+  .account-row-settings { color: var(--text-muted); }
+
+  /* Pointer devices keep the reveal-on-hover affordance: the row stays quiet
+     until it is pointed at. `hover: hover` asks the device what it can do,
+     rather than inferring it from viewport width — a touch laptop and a phone
+     both answer honestly, and a narrow desktop window is not mistaken for a
+     phone. */
+  @media (hover: hover) {
+    .account-row-remove,
+    .account-row-settings {
+      opacity: 0;
+    }
+    .account-row:hover .account-row-remove,
+    .account-row:hover .account-row-settings,
+    /* Tabbing onto the row shows them too: a focused button that stays at
+       opacity 0 is a focus ring around nothing (workspace review 2026-11-09). */
+    .account-row:focus-within .account-row-remove,
+    .account-row:focus-within .account-row-settings {
+      opacity: 1;
+    }
+  }
+
+  .account-row-remove:hover {
+    background: var(--danger-wash);
+  }
+  .account-row-settings:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .inactive-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .inactive-toggle:hover {
+    background: var(--surface-hover);
+    border-radius: var(--radius-sm);
+  }
+
+  /* Muted ink, not opacity: opacity also fades the action buttons and
+     drops the name below its contrast floor. */
+  .account-row.dimmed {
+    color: var(--text-muted);
+    gap: 6px;
+    align-items: center;
+    padding: 4px 10px;
+    /* Wrap, so the name gets a line to itself and the actions fall below it.
+       On one line the two buttons plus the "finishing sync — N left" note left
+       the name about 60px, which truncated every account to "kaiw…" — with
+       several dismissed accounts they were indistinguishable, and the group's
+       whole job is to let you pick one out and bring it back. */
+    flex-wrap: wrap;
+  }
+  .account-row.dimmed .account-row-email {
+    /* Full width of its own row; ellipsis now only for genuinely long names. */
+    flex: 1 0 100%;
+    font-size: var(--size-sm);
+  }
+  .account-row-note {
+    flex-shrink: 0;
+    font-size: var(--size-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .account-row-note.warn {
+    color: var(--danger);
+  }
+  /* Wraps, unlike `.account-row-note`: this one is a sentence naming a
+     setting in Apple's own UI, and truncating it to one line would cut off
+     the only actionable half. */
+  .account-row-blocked {
+    margin: 0 0 6px 26px;
+    padding-right: 10px;
+    font-size: var(--size-xs);
+    line-height: 1.5;
+    color: var(--danger);
+    white-space: normal;
+  }
+  .account-row.dimmed button {
+    flex: none;
+    width: auto;
+    opacity: 1;
+    padding: 3px 8px;
+    font-size: var(--size-xs);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .account-row.dimmed button:hover {
+    background: var(--surface-hover);
+  }
+  .account-row.dimmed .account-row-remove {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .account-row.dimmed .account-row-remove:hover {
+    background: var(--danger-wash);
+  }
+
+  .account-panel-action {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: var(--size);
+  }
+
+  .account-panel-action:hover {
+    background: var(--surface-hover);
+  }
+
+  /* --text-muted, not --focus: these are decorative affordance icons on menu
+     rows. They carry no state, so they should sit behind their labels rather
+     than compete with them for attention. */
+  .account-panel .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    text-align: center;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .account-panel .sep {
+    height: 1px;
+    background: var(--surface-active);
+    margin: 4px 8px;
+  }
+
+  .folder-menu {
+    position: fixed;
+    min-width: 180px;
+    background: var(--surface-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-menu);
+    padding: 4px;
+    z-index: var(--z-popover);
+    font-size: var(--size);
+    /* No max-height/overflow-y here (unlike the old D9 fix): this menu is
+       now a fixed handful of items since Move-to is a flyout, not an inline
+       list — see .submenu-anchor below. overflow on this ancestor would
+       clip the flyout, which is position:absolute; left:100% and escapes
+       this box on purpose. The flyout's own .submenu.folder-list carries
+       max-height/overflow-y for its potentially-long folder list instead. */
+  }
+
+  .folder-menu .item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    border-radius: var(--radius-sm);
+  }
+
+  .folder-menu .item:hover {
+    background: var(--surface-hover);
+  }
+
+  /* As NoteContextMenu and NoteMoreMenu: a disabled AI item (hidden from AI)
+     must look inert, hover included. */
+  .folder-menu .item:disabled {
+    cursor: default;
+    opacity: 0.4;
+    background: transparent;
+  }
+
+  .folder-menu .item.danger {
+    color: var(--danger);
+  }
+
+  .folder-menu .item.header {
+    color: var(--text-muted);
+    font-size: var(--size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: default;
+    padding-top: 6px;
+    padding-bottom: 4px;
+  }
+
+  .folder-menu .item.header:hover {
+    background: none;
+  }
+
+  .folder-menu .item.folder {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  /* D10: parent row appears in the move-to list but disabled, with a
+     "(current)" tag, so the user sees that the parent exists rather than
+     thinking the folder vanished. Pointer cursor neutralized; hover
+     background suppressed so it reads as inert. */
+  .folder-menu .item.folder.current-location {
+    color: var(--text-muted);
+    cursor: default;
+  }
+  .folder-menu .item.folder.current-location:hover {
+    background: none;
+  }
+  .folder-menu .here-tag {
+    margin-left: 6px;
+    font-size: var(--size-xs);
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .folder-menu .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .folder-menu .label {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: var(--leading);
+  }
+
+  .folder-menu .sep {
+    height: 1px;
+    background: var(--surface-active);
+    margin: 4px 8px;
+  }
+
+  /* "Move to" hover flyout — ported from NoteContextMenu's .submenu-anchor
+     so both context menus' Move-to behaves identically. */
+  .folder-menu .submenu-anchor {
+    position: relative;
+  }
+  .folder-menu .submenu-anchor > .submenu {
+    display: none;
+    position: absolute;
+    left: 100%;
+    top: -4px;
+    min-width: 180px;
+    background: var(--surface-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-menu);
+    padding: 4px;
+    z-index: calc(var(--z-popover) + 1);
+  }
+  :global(.folder-menu .submenu-anchor > .submenu.flip-left) {
+    left: auto;
+    right: 100%;
+  }
+  .folder-menu .submenu-anchor > .submenu.folder-list {
+    max-height: 60vh;
+    max-width: 280px;
+    overflow-y: auto;
+  }
+  .folder-menu .submenu-anchor:hover > .submenu,
+  .folder-menu .submenu-anchor.open > .submenu {
+    display: block;
+  }
+  .folder-menu .chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--text-disabled);
+    font-size: var(--size-xs);
+  }
+  .folder-menu .item.has-submenu {
+    cursor: default;
+  }
+
+  /* ─── Phone bottom sheets (the folder menu) ────────────────────────────
+     The rows are src/styles/sheet-menu.css, shared by every sheet menu; only
+     this menu's own row kinds are here. Tokens only. */
+  .sheet-menu .item.folder.current-location {
+    color: var(--text-muted);
+    cursor: default;
+  }
+  .sheet-menu .here-tag {
+    font-size: var(--size-xs);
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* Touch (critique 2026-11-10, P1): the tablet keeps the full column, and
+     its rows and icon buttons were desktop-sized — 28px rows and 16px icon
+     buttons under a finger. A coarse pointer gets the 48px Touch Target; a
+     mouse keeps the desktop density. The phone has its own pane
+     (PhoneFolders), sized for touch already. */
+  @media (pointer: coarse) {
+    .folder-item,
+    .account-chip,
+    .account-row-pick,
+    .account-panel-action,
+    .version-label {
+      min-height: var(--touch-target);
+    }
+    .expand-toggle {
+      width: var(--touch-target);
+      height: var(--touch-target);
+      margin: calc(var(--space-3) * -1) 0;
+    }
+    .new-folder-btn,
+    .settings-gear,
+    .account-row-settings,
+    .account-row-remove,
+    .tags-toggle,
+    .views-toggle,
+    .tag-mode,
+    .tag-clear,
+    .notice-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: var(--touch-target);
+      min-height: var(--touch-target);
+    }
+    /* Pills stay a cloud, not a list: 40px tall with 8px between them, so
+       each still owns a 48px slot (WCAG 2.5.8's spacing allowance). */
+    .tag-chips {
+      gap: var(--space-2);
+    }
+    .tag-pill {
+      min-height: calc(var(--touch-target) - var(--space-2));
+      padding-left: var(--space-3);
+      padding-right: var(--space-3);
+    }
+  }
+</style>

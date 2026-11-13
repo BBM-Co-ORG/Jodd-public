@@ -1,0 +1,765 @@
+// @vitest-environment jsdom
+import './__fixtures__/dialogStub';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mount, unmount, flushSync, tick } from 'svelte';
+import AiHostPanel from './AiHostPanel.svelte';
+
+const copyText = vi.fn();
+vi.mock('../clipboard', () => ({ copyText: (...a: unknown[]) => copyText(...a) }));
+
+const invoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
+const openUrl = vi.fn();
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (...a: unknown[]) => openUrl(...a) }));
+
+let target: HTMLElement;
+let app: ReturnType<typeof mount> | undefined;
+
+beforeEach(() => {
+  invoke.mockReset();
+  openUrl.mockReset().mockResolvedValue(undefined);
+  copyText.mockReset().mockResolvedValue(true);
+  document.body.innerHTML = '';
+  target = document.createElement('div');
+  document.body.append(target);
+});
+afterEach(async () => {
+  if (app) await unmount(app);
+  app = undefined;
+});
+
+async function settle() {
+  for (let i = 0; i < 10; i++) await tick();
+  flushSync();
+}
+function field(label: string): HTMLInputElement {
+  const l = [...target.querySelectorAll('label')].find(
+    (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim() === label,
+  );
+  if (!l) throw new Error(`no field ${label}: ${target.innerHTML}`);
+  return l.querySelector('input') as HTMLInputElement;
+}
+function type(el: HTMLInputElement, value: string) {
+  el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function button(name: string): HTMLButtonElement {
+  const b = [...target.querySelectorAll('button')].find((x) => x.textContent?.trim() === name);
+  if (!b) throw new Error(`no button ${name}: ${target.innerHTML}`);
+  return b as HTMLButtonElement;
+}
+
+const FP = { algorithm: 'ED25519', fingerprint: 'SHA256:abc', known_hosts_line: 'vps ssh-ed25519 AAAA' };
+
+describe('AiHostPanel', () => {
+  it('links to the server set-up guide', async () => {
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    await settle();
+    button('How to set up a server').click();
+    expect(openUrl).toHaveBeenCalledWith('https://jodd.bbmedia.co.th/ai-host.html');
+  });
+
+  it('walks fingerprint → password → setup and reports the host', async () => {
+    const presets = [{ id: 'codex', path: '/usr/bin/codex' }, { id: 'claude', path: null }];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_setup')
+        return { host: { target: 'me@vps', port: null, key_dir: 'k' }, status: { protocol: 'legacy', version: 1, current: true, presets, notices: [] } };
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: null, onchange } });
+    type(field('Server'), 'vps');
+    type(field('Username'), 'me');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    expect(target.textContent).toContain('SHA256:abc');
+    // "hosting provider", not "provider": on an AI settings page a bare
+    // "provider" reads as the LLM provider.
+    expect(target.textContent!.replace(/\s+/g, ' ')).toContain('If your hosting provider shows a fingerprint');
+    type(field('Password'), 'pw');
+    flushSync();
+    button('Trust and set up').click();
+    await settle();
+    expect(target.textContent).toContain('Codex CLI');
+    expect(onchange).toHaveBeenCalledWith({ target: 'me@vps', port: null, key_dir: 'k' }, presets);
+    expect(invoke).toHaveBeenCalledWith('ai_host_setup', {
+      host: 'vps', port: null, user: 'me', password: 'pw', knownHostsLine: 'vps ssh-ed25519 AAAA',
+    });
+  });
+
+  it('shows "needs an update" when the wrapper is stale', async () => {
+    invoke.mockResolvedValue({ protocol: 'legacy', version: 0, current: false, presets: [], notices: [] });
+    app = mount(AiHostPanel, { target, props: { host: { target: 'me@vps', port: null, key_dir: 'k' }, onchange: vi.fn() } });
+    await settle();
+    expect(target.textContent).toMatch(/needs an update/i);
+  });
+
+  it('clears the password field after a failed setup', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return { ...FP, known_hosts_line: 'l' };
+      throw 'The server rejected that username or password.';
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    type(field('Server'), 'vps');
+    type(field('Username'), 'me');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    const pw = field('Password');
+    type(pw, 'bad');
+    flushSync();
+    button('Trust and set up').click();
+    await settle();
+    expect(target.textContent).toContain('rejected');
+    expect(field('Password').value).toBe('');
+  });
+
+  it('lists installed and missing CLIs for a configured host', async () => {
+    invoke.mockResolvedValue({
+      protocol: 'legacy', version: 1, current: true, notices: [],
+      presets: [{ id: 'codex', path: '/usr/bin/codex' }, { id: 'claude', path: null }],
+    });
+    app = mount(AiHostPanel, { target, props: { host: { target: 'me@vps', port: null, key_dir: 'k' }, onchange: vi.fn() } });
+    await settle();
+    expect(target.textContent).toContain('/usr/bin/codex');
+    expect(target.textContent).toContain('not installed');
+    expect(invoke).toHaveBeenCalledWith('ai_host_status', { host: { target: 'me@vps', port: null, key_dir: 'k' } });
+  });
+
+  it('Remove asks first, forgets the host, then reports null', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return { protocol: 'legacy', version: 1, current: true, presets: [], notices: [] };
+      if (cmd === 'ai_host_forget') return null;
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: { target: 'me@vps', port: null, key_dir: 'k' }, onchange } });
+    await settle();
+    button('Remove').click();
+    await settle();
+    expect(invoke.mock.calls.map((c) => c[0])).not.toContain('ai_host_forget');
+    [...target.querySelectorAll('dialog button')].find((b) => b.textContent?.trim() === 'Remove server')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('ai_host_forget', { host: { target: 'me@vps', port: null, key_dir: 'k' } });
+    expect(onchange).toHaveBeenCalledWith(null, []);
+  });
+
+  it('Remove also tells the parent it is gone (the key is deleted at once)', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return { protocol: 'legacy', version: 1, current: true, presets: [], notices: [] };
+      if (cmd === 'ai_host_forget') return null;
+      throw new Error(cmd);
+    });
+    const onremoved = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: { target: 'me@vps', port: null, key_dir: 'k' }, onchange: vi.fn(), onremoved } });
+    await settle();
+    button('Remove').click();
+    await settle();
+    expect(target.querySelector('dialog')?.textContent).toContain('takes effect immediately');
+    [...target.querySelectorAll('dialog button')].find((b) => b.textContent?.trim() === 'Remove server')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(onremoved).toHaveBeenCalledTimes(1);
+    expect(target.textContent).not.toContain('me@vps');
+  });
+
+  it('a failed Remove does not report the server gone', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return { protocol: 'legacy', version: 1, current: true, presets: [], notices: [] };
+      throw 'boom';
+    });
+    const onremoved = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: { target: 'me@vps', port: null, key_dir: 'k' }, onchange: vi.fn(), onremoved } });
+    await settle();
+    button('Remove').click();
+    await settle();
+    [...target.querySelectorAll('dialog button')].find((b) => b.textContent?.trim() === 'Remove server')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(onremoved).not.toHaveBeenCalled();
+  });
+
+  it('rejects an "@" in Server instead of building me@me@box', async () => {
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    type(field('Server'), 'me@box');
+    type(field('Username'), 'me');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    expect(target.querySelector('[role="alert"]')?.textContent).toContain('without “@”');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('the trust screen says the key is restricted but Codex can read files', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    type(field('Server'), 'vps');
+    type(field('Username'), 'me');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    const t = target.textContent ?? '';
+    expect(t).toContain('can only run Claude Code or Codex');
+    expect(t).toContain('Codex can read any file this account can');
+    expect(t).not.toContain('same access to the server');
+  });
+
+  const OLD = { target: 'me@vps', port: 2222, key_dir: 'old' };
+  const NEW = { target: 'jodd@box', port: null, key_dir: 'new' };
+  const STATUS = { protocol: 'legacy', version: 1, current: true, presets: [{ id: 'claude', path: '/usr/bin/claude' }], notices: [] };
+
+  it('"Reinstall helper" reinstalls with the password and says so', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status' || cmd === 'ai_host_update') return STATUS;
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: OLD, onchange: vi.fn() } });
+    await settle();
+    expect([...target.querySelectorAll('button')].map((b) => b.textContent?.trim())).not.toContain('Update');
+    button('Reinstall helper').click();
+    flushSync();
+    expect(target.textContent).toContain("reinstall Jodd's helper");
+    type(field('Password'), 'pw');
+    flushSync();
+    button('Reinstall now').click();
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('ai_host_update', { host: OLD, password: 'pw' });
+  });
+
+  it('Change server prefills the form from the current host', async () => {
+    invoke.mockResolvedValue(STATUS);
+    app = mount(AiHostPanel, { target, props: { host: OLD, onchange: vi.fn() } });
+    await settle();
+    button('Change server').click();
+    flushSync();
+    expect(field('Server').value).toBe('vps');
+    expect(field('Port').value).toBe('2222');
+    expect(field('Username').value).toBe('me');
+    expect(target.textContent).toContain('keeps working until the new one is set up');
+  });
+
+  it('Change server sets up the new host first, then forgets the old one', async () => {
+    const order: string[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      order.push(cmd);
+      if (cmd === 'ai_host_status') return STATUS;
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_setup') return { host: NEW, status: STATUS };
+      if (cmd === 'ai_host_forget') return null;
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    const onreplaced = vi.fn();
+    const onremoved = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: OLD, onchange, onreplaced, onremoved } });
+    await settle();
+    button('Change server').click();
+    flushSync();
+    type(field('Server'), 'box');
+    type(field('Port'), '');
+    type(field('Username'), 'jodd');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    type(field('Password'), 'pw');
+    flushSync();
+    button('Trust and set up').click();
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('ai_host_setup', {
+      host: 'box', port: null, user: 'jodd', password: 'pw', knownHostsLine: FP.known_hosts_line,
+    });
+    expect(invoke).toHaveBeenCalledWith('ai_host_forget', { host: OLD });
+    expect(order.indexOf('ai_host_setup')).toBeLessThan(order.indexOf('ai_host_forget'));
+    expect(onchange).toHaveBeenLastCalledWith(NEW, STATUS.presets);
+    expect(onreplaced).toHaveBeenCalledWith(OLD, NEW);
+    expect(onremoved).not.toHaveBeenCalled();
+    expect(target.textContent).toContain('Server: box');
+  });
+
+  it('a failed Change server keeps the old host and its key', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return STATUS;
+      if (cmd === 'ssh_fingerprint') return FP;
+      throw 'The server rejected that username or password.';
+    });
+    const onreplaced = vi.fn();
+    const onchange = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: OLD, onchange, onreplaced } });
+    await settle();
+    onchange.mockClear();
+    button('Change server').click();
+    flushSync();
+    button('Continue').click();
+    await settle();
+    type(field('Password'), 'bad');
+    flushSync();
+    button('Trust and set up').click();
+    await settle();
+    expect(target.textContent).toContain('rejected');
+    expect(invoke.mock.calls.map((c) => c[0])).not.toContain('ai_host_forget');
+    expect(onreplaced).not.toHaveBeenCalled();
+    expect(onchange).not.toHaveBeenCalled();
+    button('Back').click();
+    flushSync();
+    button('Cancel').click();
+    flushSync();
+    expect(target.textContent).toContain('Server: vps:2222');
+  });
+
+  it('Cancel leaves Change server without touching anything', async () => {
+    invoke.mockResolvedValue(STATUS);
+    app = mount(AiHostPanel, { target, props: { host: OLD, onchange: vi.fn() } });
+    await settle();
+    invoke.mockClear();
+    button('Change server').click();
+    flushSync();
+    button('Cancel').click();
+    flushSync();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(button('Change server')).toBeTruthy();
+  });
+  describe('against an MCP host', () => {
+    const H = { target: 'me@vps', port: null, key_dir: 'k' };
+    const CODEX_OFF = {
+      feature: 'codex', kind: 'ask_admin',
+      text: 'Codex is turned off on this host. Ask its administrator to run `sudo jodd-ai-host enable codex`.',
+    };
+    const MCP: { protocol: string; version: string; harnesses: string[]; notices: unknown[] } =
+      { protocol: 'mcp', version: '1.0.0', harnesses: ['claude', 'codex'], notices: [] };
+    const MCP_CODEX_OFF = { ...MCP, harnesses: ['claude'], notices: [CODEX_OFF] };
+    const LEGACY = {
+      protocol: 'legacy', version: 2, current: true, notices: [{
+        feature: 'legacy', kind: 'upgrade_host',
+        text: 'This AI host uses the old helper. Upgrade it: install the AI host kit on the host, then run `sudo jodd-ai-host adopt-keys`.',
+      }],
+      presets: [{ id: 'claude', path: '/usr/bin/claude' }, { id: 'codex', path: null }],
+    };
+    const labels = () => [...target.querySelectorAll('button')].map((b) => b.textContent?.trim());
+
+    it('an MCP host shows its version and enabled harnesses', async () => {
+      invoke.mockResolvedValue(MCP);
+      const onchange = vi.fn();
+      app = mount(AiHostPanel, { target, props: { host: H, onchange } });
+      await settle();
+      expect(target.textContent!.replace(/\s+/g, ' ')).toContain('AI host 1.0.0 on vps');
+      const rows = [...target.querySelectorAll('.cli-list li')];
+      expect(rows.map((r) => r.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['Claude Code', 'Codex CLI']);
+      expect(rows.every((r) => r.querySelector('.mark.ok'))).toBe(true);
+      // The form's preset list reads the host as {id, path}: enabled = usable.
+      expect(onchange).toHaveBeenCalledWith(H, [{ id: 'claude', path: 'claude' }, { id: 'codex', path: 'codex' }]);
+    });
+
+    it('a turned-off harness is disabled with its reason', async () => {
+      invoke.mockResolvedValue(MCP_CODEX_OFF);
+      const onchange = vi.fn();
+      app = mount(AiHostPanel, { target, props: { host: H, onchange } });
+      await settle();
+      const [claude, codex] = [...target.querySelectorAll('.cli-list li')];
+      expect(claude.querySelector('.mark.ok')).not.toBeNull();
+      expect(codex.querySelector('.mark.ok')).toBeNull();
+      expect(codex.textContent).toContain('sudo jodd-ai-host enable codex');
+      expect(onchange).toHaveBeenCalledWith(H, [
+        { id: 'claude', path: 'claude' },
+        { id: 'codex', path: null, reason: CODEX_OFF.text },
+      ]);
+    });
+
+    it('shows other notices one line each', async () => {
+      invoke.mockResolvedValue({
+        ...MCP,
+        notices: [{ feature: 'forget_key', kind: 'upgrade_host', text: 'Upgrade the AI host to use Remove AI host.' }],
+      });
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      const lines = [...target.querySelectorAll('p.help.warn')].map((p) => p.textContent);
+      expect(lines).toEqual(['Upgrade the AI host to use Remove AI host.']);
+    });
+
+    it('a legacy host shows the upgrade banner and Reinstall', async () => {
+      invoke.mockResolvedValue(LEGACY);
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      expect(target.querySelector('p.help.warn')?.textContent).toContain('uses the old helper');
+      expect(target.textContent).toContain('/usr/bin/claude');
+      expect(labels()).toContain('Reinstall helper');
+    });
+
+    it('an MCP host has no Reinstall button', async () => {
+      invoke.mockResolvedValue(MCP);
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      expect(labels()).not.toContain('Reinstall helper');
+      expect(labels()).toContain('Change server');
+      expect(labels()).toContain('Remove');
+    });
+
+    it('setup success recommends lock, and Remove clears it', async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'ssh_fingerprint') return FP;
+        if (cmd === 'ai_host_setup') return { host: H, status: MCP };
+        if (cmd === 'ai_host_forget') return null;
+        throw new Error(cmd);
+      });
+      app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+      type(field('Server'), 'vps');
+      type(field('Username'), 'me');
+      flushSync();
+      button('Continue').click();
+      await settle();
+      expect(target.textContent).not.toContain('jodd-ai-host lock');
+      type(field('Password'), 'pw');
+      flushSync();
+      button('Trust and set up').click();
+      await settle();
+      expect(target.textContent!.replace(/\s+/g, ' ')).toContain(
+        'Next, on the host: run sudo jodd-ai-host lock so the AI account can no longer log in with its password.',
+      );
+      expect(target.textContent).toContain('AI host 1.0.0 on vps');
+      button('Remove').click();
+      await settle();
+      [...target.querySelectorAll('dialog button')].find((b) => b.textContent?.trim() === 'Remove server')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await settle();
+      expect(target.textContent).not.toContain('jodd-ai-host lock');
+    });
+
+    it('offers Reinstall when the status check fails (the host is not known to be MCP)', async () => {
+      invoke.mockRejectedValue('could not connect');
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      expect(target.textContent).toContain('could not connect');
+      expect(labels()).toContain('Reinstall helper');
+    });
+
+    it('a Reinstall that finds an MCP host renders it as MCP', async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'ai_host_status') return LEGACY;
+        if (cmd === 'ai_host_update') return MCP;
+        throw new Error(cmd);
+      });
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      button('Reinstall helper').click();
+      flushSync();
+      type(field('Password'), 'pw');
+      flushSync();
+      button('Reinstall now').click();
+      await settle();
+      expect(target.textContent!.replace(/\s+/g, ' ')).toContain('AI host 1.0.0 on vps');
+      expect(labels()).not.toContain('Reinstall helper');
+    });
+
+    it('backticks in host text render as code, and nothing else is markup', async () => {
+      invoke.mockResolvedValue({
+        ...MCP_CODEX_OFF,
+        notices: [CODEX_OFF, { feature: 'infer', kind: 'update_jodd', text: 'Run `x` <b>bold</b>' }],
+      });
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      const reason = target.querySelector('.cli-list li .reason')!;
+      expect(reason.querySelector('code')?.textContent).toBe('sudo jodd-ai-host enable codex');
+      expect(reason.textContent).not.toContain('`');
+      const line = target.querySelector('p.help.warn')!;
+      expect(line.querySelector('code')?.textContent).toBe('x');
+      expect(line.querySelector('b')).toBeNull();
+      expect(line.textContent).toContain('<b>bold</b>');
+    });
+
+    it('a refresh finishing during a pending setup leaves the setup disabled', async () => {
+      let status = MCP;
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'ai_host_status') return status;
+        if (cmd === 'ssh_fingerprint') return FP;
+        if (cmd === 'ai_host_setup') return new Promise(() => {}); // pending
+        throw new Error(cmd);
+      });
+      app = mount(AiHostPanel, { target, props: { host: H, onchange: vi.fn() } });
+      await settle();
+      button('Change server').click();
+      flushSync();
+      button('Continue').click();
+      await settle();
+      type(field('Password'), 'pw');
+      flushSync();
+      button('Trust and set up').click();
+      await settle();
+      expect(button('Setting up…').disabled).toBe(true);
+      status = MCP_CODEX_OFF;
+      await (app as unknown as { refreshStatus: () => Promise<void> }).refreshStatus();
+      await settle();
+      expect(button('Setting up…').disabled).toBe(true);
+    });
+
+    it('refreshStatus asks the host again and reports the new harnesses', async () => {
+      invoke.mockResolvedValue(MCP_CODEX_OFF);
+      const onchange = vi.fn();
+      app = mount(AiHostPanel, { target, props: { host: H, onchange } });
+      await settle();
+      invoke.mockResolvedValue(MCP);
+      await (app as unknown as { refreshStatus: () => Promise<void> }).refreshStatus();
+      await settle();
+      expect(invoke.mock.calls.filter((c) => c[0] === 'ai_host_status')).toHaveLength(2);
+      expect(onchange).toHaveBeenLastCalledWith(H, [{ id: 'claude', path: 'claude' }, { id: 'codex', path: 'codex' }]);
+    });
+  });
+});
+
+describe('AiHostPanel: by command', () => {
+  const CMDS = {
+    sudo: "sudo jodd-ai-host add-key 'ssh-ed25519 AAAAC3  jodd'  # exact",
+    docker: 'docker exec jodd-ai-host jodd-ai-host add-key "ssh-ed25519 AAAAC3"',
+  };
+  const PREPARED = { target: 'jodd@vps', port: null, key_dir: 'new' };
+  const OLDH = { target: 'me@vps', port: 2222, key_dir: 'old' };
+  const OKSTATUS = { protocol: 'mcp', version: '1.1.0', harnesses: ['claude', 'codex'], notices: [] };
+  const LEGACY_ST = { protocol: 'legacy', version: 1, current: true, presets: [], notices: [] };
+
+  function choose(label: string) {
+    const l = [...target.querySelectorAll('label.choice')].find((x) => x.textContent?.trim() === label);
+    if (!l) throw new Error(`no choice ${label}: ${target.innerHTML}`);
+    const r = l.querySelector('input') as HTMLInputElement;
+    r.click();
+    flushSync();
+  }
+  async function toCommandScreen() {
+    type(field('Server'), 'vps');
+    type(field('Username'), 'me');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    choose('Run a command on the host');
+    button('Trust and set up').click();
+    await settle();
+  }
+  const calls = (name: string) => invoke.mock.calls.filter((c) => c[0] === name);
+
+  it('command setup shows both commands and copies the sudo one exactly', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    await toCommandScreen();
+    expect(invoke).toHaveBeenCalledWith('ai_host_prepare_command', {
+      host: 'vps', port: null, user: 'me', knownHostsLine: FP.known_hosts_line,
+    });
+    const codes = [...target.querySelectorAll('code.cmd')].map((c) => c.textContent);
+    expect(codes).toEqual([CMDS.sudo, CMDS.docker]);
+    expect(target.textContent).toContain('On the host');
+    expect(target.textContent).toContain('Docker');
+    expect(target.textContent).toContain('Needs AI host kit 1.1.0 or later.');
+    expect(target.textContent).not.toMatch(/unlock|password/i);
+    const copies = [...target.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Copy');
+    expect(copies).toHaveLength(2);
+    copies[0].click();
+    await settle();
+    expect(copyText).toHaveBeenCalledWith(CMDS.sudo);
+    expect(target.textContent).toContain('Copied');
+  });
+
+  it('Copy that fails shows a select-and-copy hint', async () => {
+    copyText.mockResolvedValue(false);
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    await toCommandScreen();
+    [...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Copy')!.click();
+    await settle();
+    expect(target.textContent).toContain('Select the command and copy it');
+  });
+
+  it("I've run it stays on the screen on a refusal and succeeds on retry", async () => {
+    let finishes = 0;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      if (cmd === 'ai_host_finish_command') {
+        if (++finishes === 1) throw "The server doesn't accept Jodd's key yet.";
+        return { host: PREPARED, status: OKSTATUS };
+      }
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: null, onchange } });
+    await toCommandScreen();
+    button("I've run it").click();
+    await settle();
+    expect(target.querySelector('[role="alert"]')?.textContent).toContain("doesn't accept Jodd's key yet");
+    expect(button("I've run it")).toBeTruthy();
+    button("I've run it").click();
+    await settle();
+    expect(calls('ai_host_prepare_command')).toHaveLength(1);
+    expect(calls('ai_host_finish_command')).toHaveLength(2);
+    expect(calls('ai_host_finish_command')[1][1]).toEqual({ host: PREPARED });
+    expect(onchange).toHaveBeenLastCalledWith(PREPARED, [{ id: 'claude', path: 'claude' }, { id: 'codex', path: 'codex' }]);
+    expect(target.textContent).toContain('AI host 1.1.0 on');
+    expect(calls('ai_host_cancel_command')).toHaveLength(0);
+  });
+
+  it("I've run it is disabled while finishing, and Back/Cancel are too", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      if (cmd === 'ai_host_finish_command') return new Promise(() => {});
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    await toCommandScreen();
+    const b = button("I've run it");
+    b.click();
+    await settle();
+    b.click();
+    await settle();
+    expect(calls('ai_host_finish_command')).toHaveLength(1);
+    expect(button("I've run it").disabled).toBe(true);
+    expect(button('Back').disabled).toBe(true);
+    expect(button('Cancel').disabled).toBe(true);
+    button('Cancel').click();
+    await settle();
+    expect(calls('ai_host_cancel_command')).toHaveLength(0);
+  });
+
+  it('change server by command forgets the old host only after the new one works', async () => {
+    const order: string[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      order.push(cmd);
+      if (cmd === 'ai_host_status') return LEGACY_ST;
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      if (cmd === 'ai_host_finish_command') return { host: PREPARED, status: OKSTATUS };
+      if (cmd === 'ai_host_forget') return null;
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    const onreplaced = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: OLDH, onchange, onreplaced } });
+    await settle();
+    button('Change server').click();
+    flushSync();
+    button('Continue').click();
+    await settle();
+    choose('Run a command on the host');
+    button('Trust and set up').click();
+    await settle();
+    expect(order).not.toContain('ai_host_forget');
+    button("I've run it").click();
+    await settle();
+    expect(order.indexOf('ai_host_finish_command')).toBeLessThan(order.indexOf('ai_host_forget'));
+    expect(invoke).toHaveBeenCalledWith('ai_host_forget', { host: OLDH });
+    expect(onreplaced).toHaveBeenCalledWith(OLDH, PREPARED);
+    expect(target.textContent).not.toContain('jodd-ai-host lock');
+  });
+
+  it('cancel on the command screen calls ai_host_cancel_command', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      if (cmd === 'ai_host_cancel_command') return null;
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    await toCommandScreen();
+    button('Cancel').click();
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('ai_host_cancel_command', { host: PREPARED });
+    expect(target.querySelector('code.cmd')).toBeNull();
+    expect(field('Server').value).toBe('vps');
+  });
+
+  it('Back on the command screen cancels the prepared key too', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      if (cmd === 'ai_host_prepare_command') return { host: PREPARED, commands: CMDS };
+      if (cmd === 'ai_host_cancel_command') return null;
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    await toCommandScreen();
+    button('Back').click();
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('ai_host_cancel_command', { host: PREPARED });
+    expect(button('Trust and set up')).toBeTruthy();
+  });
+
+  it('the Password field shows only for the Password method', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ssh_fingerprint') return FP;
+      throw new Error(cmd);
+    });
+    app = mount(AiHostPanel, { target, props: { host: null, onchange: vi.fn() } });
+    type(field('Server'), 'vps');
+    type(field('Username'), 'me');
+    flushSync();
+    button('Continue').click();
+    await settle();
+    expect(field('Password')).toBeTruthy();
+    choose('Run a command on the host');
+    expect(() => field('Password')).toThrow();
+  });
+
+  it('reinstall by command shows the commands and Check refreshes status', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return LEGACY_ST;
+      if (cmd === 'ai_host_reinstall_commands') return CMDS;
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: OLDH, onchange }  });
+    await settle();
+    button('Reinstall helper').click();
+    flushSync();
+    choose('Run a command on the host');
+    button('Show command').click();
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('ai_host_reinstall_commands', { host: OLDH });
+    expect([...target.querySelectorAll('code.cmd')].map((c) => c.textContent)).toEqual([CMDS.sudo, CMDS.docker]);
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return OKSTATUS;
+      throw new Error(cmd);
+    });
+    button('Check').click();
+    await settle();
+    expect(target.textContent).toContain('AI host 1.1.0 on');
+    expect(onchange).toHaveBeenLastCalledWith(OLDH, [{ id: 'claude', path: 'claude' }, { id: 'codex', path: 'codex' }]);
+    expect(target.querySelector('code.cmd')).toBeNull();
+  });
+
+  it('Check that still finds the older helper keeps the commands on screen and says so', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return LEGACY_ST;
+      if (cmd === 'ai_host_reinstall_commands') return CMDS;
+      throw new Error(cmd);
+    });
+    const onchange = vi.fn();
+    app = mount(AiHostPanel, { target, props: { host: OLDH, onchange } });
+    await settle();
+    button('Reinstall helper').click();
+    flushSync();
+    choose('Run a command on the host');
+    button('Show command').click();
+    await settle();
+    button('Check').click();
+    await settle();
+    expect([...target.querySelectorAll('code.cmd')].map((c) => c.textContent)).toEqual([CMDS.sudo, CMDS.docker]);
+    expect(target.querySelector('[role="alert"]')?.textContent).toBe(
+      'The host still runs the older helper. Run the command (needs AI host kit 1.1.0 or later), then press Check again.',
+    );
+    expect(button('Check')).toBeTruthy();
+    // Pressing Check again once the host runs the new helper closes the screen.
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'ai_host_status') return OKSTATUS;
+      throw new Error(cmd);
+    });
+    button('Check').click();
+    await settle();
+    expect(target.querySelector('code.cmd')).toBeNull();
+    expect(target.querySelector('[role="alert"]')).toBeNull();
+    expect(target.textContent).toContain('AI host 1.1.0 on');
+  });
+});
