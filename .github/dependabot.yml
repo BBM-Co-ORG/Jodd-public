@@ -1,0 +1,42 @@
+# Dependency update pull requests. Weekly, grouped, and capped — the point is
+# that a pinned action or a vulnerable crate gets a pull request, not that
+# every patch release does.
+#
+# `github-actions` is what keeps the commit-pinned actions in the workflows
+# current: Dependabot moves the SHA and the `# vX.Y.Z` comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Version bumps are limited to minor and patch, in one grouped pull request.
+  # A major bump of Tauri, wry or tao is a device-tested project of its own
+  # (CLAUDE.md gotchas #31, #45), never a routine update.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
