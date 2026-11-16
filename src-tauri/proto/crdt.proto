@@ -1,0 +1,114 @@
+syntax = "proto2";
+
+package CRDT;
+
+import "topotext.proto";
+
+message ObjectID {
+  optional sint64 integerValue = 1;
+  optional uint64 unsignedIntegerValue = 2;
+  optional double doubleValue = 3;
+  optional string stringValue = 4;
+  optional bytes bytesValue = 5;
+  optional uint32 objectIndex = 6;
+}
+
+message Timestamp {
+  optional uint64 replicaIndex = 1;
+  optional int64 counter = 2;
+}
+
+message RegisterLatest {
+  optional CRDT.Timestamp timestamp = 1;
+  optional CRDT.ObjectID contents = 2;
+}
+
+message VectorTimestamp {
+  message Element {
+    optional uint64 replicaIndex = 1;
+    optional uint64 clock = 2;
+    optional uint64 subclock = 3;
+  }
+  repeated CRDT.VectorTimestamp.Element element = 1;
+}
+
+message Dictionary {
+  message Element {
+    optional CRDT.ObjectID key = 1;
+    required CRDT.ObjectID value = 2;
+    optional CRDT.VectorTimestamp timestamp = 3;
+    optional CRDT.RegisterLatest index = 4;
+  }
+  repeated CRDT.Dictionary.Element element = 1;
+}
+
+message Index {
+  message Element {
+    optional uint64 replicaIndex = 1;
+    optional int64 integer = 2;
+  }
+  repeated CRDT.Index.Element element = 1;
+}
+
+message OneOf {
+  message Element {
+    optional CRDT.ObjectID value = 1;
+    optional CRDT.Timestamp timestamp = 2;
+  }
+  repeated CRDT.OneOf.Element element = 1;
+}
+
+message StringArray {
+  message ArrayAttachment {
+    required uint64 attachmentIndex = 1;
+    required bytes contents = 2;
+  }
+  required topotext.String contents = 1;
+  repeated CRDT.StringArray.ArrayAttachment attachments = 2;
+}
+
+message Array {
+  required CRDT.StringArray array = 1;
+  required CRDT.Dictionary dictionary = 2;
+}
+
+message OrderedSet {
+  required CRDT.Array array = 1;
+  required CRDT.Dictionary set = 2;
+}
+
+message Document {
+  message CustomObject {
+    message MapEntry {
+      required int32 key = 1;
+      required CRDT.ObjectID value = 2;
+    }
+    required int32 type = 1;
+    repeated CRDT.Document.CustomObject.MapEntry mapEntry = 3;
+  }
+  message DocObject {
+    optional CRDT.RegisterLatest registerLatest = 1;
+    optional CRDT.RegisterLatest registerGreatest = 2;
+    optional CRDT.RegisterLatest registerLeast = 3;
+    optional CRDT.Dictionary set = 4;
+    optional CRDT.Dictionary orderedSet = 5;
+    optional CRDT.Dictionary dictionary = 6;
+    optional CRDT.Timestamp timestamp = 7;
+    optional CRDT.VectorTimestamp vectorTimestamp = 8;
+    optional CRDT.Index index = 9;
+    optional topotext.String string = 10;
+    optional uint64 weakReference = 11;
+    optional CRDT.OneOf oneof = 12;
+    optional CRDT.Document.CustomObject custom = 13;
+    optional CRDT.StringArray stringArray = 14;
+    optional CRDT.Array array = 15;
+    optional CRDT.OrderedSet tsOrderedSet = 16;
+  }
+  optional CRDT.VectorTimestamp version = 1;
+  optional CRDT.VectorTimestamp startVersion = 2;
+  repeated CRDT.Document.DocObject object = 3;
+  repeated string keyItem = 4;
+  repeated string typeItem = 5;
+  repeated bytes uuidItem = 6;
+  optional topotext.VectorTimestamp ttTimestamp = 7;
+}

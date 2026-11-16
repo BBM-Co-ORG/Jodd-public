@@ -1,0 +1,78 @@
+# cargo-deny: what the dependency tree is allowed to contain.
+# Run by .github/workflows/audit.yml. Locally:
+#   cargo install cargo-deny --locked && cargo deny check
+#
+# An entry under `ignore` is a decision with a reason and a condition for
+# removing it — never a way to make a red check green. cargo-deny warns when
+# an ignored advisory no longer matches anything, so stale entries surface.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = [
+    # rmcp's HTTP client and OAuth client. Jodd builds rmcp with stdio and
+    # async-rw transports only (`transport-io`, `transport-async-rw`), so
+    # neither code path is compiled in. Remove on the rmcp 3 upgrade.
+    { id = "RUSTSEC-2026-0457", reason = "rmcp OAuth client is not enabled" },
+    { id = "RUSTSEC-2026-0462", reason = "rmcp Streamable HTTP client is not enabled" },
+
+    # Marvin timing attack on RSA private-key operations. `rsa` arrives through
+    # russh, which pins a 0.10 release candidate; no fixed version satisfies
+    # that pin. Exposure is an SSH client signing with an RSA user key against
+    # a server that measures it — Jodd's managed keys are Ed25519.
+    # Remove when russh moves to rsa >= 0.10.0.
+    { id = "RUSTSEC-2023-0071", reason = "pinned by russh; managed SSH keys are Ed25519" },
+
+    # Unmaintained, all transitive, no replacement available to this repo:
+    # proc-macro-error via Tauri's GTK3 stack (Linux is not a release target),
+    # zbus_names/zvariant via the Linux secret-service keyring store, and
+    # unsafe-libyaml via serde_yaml_ng.
+    { id = "RUSTSEC-2024-0370", reason = "transitive via GTK3 macros (Tauri on Linux)" },
+    { id = "RUSTSEC-2026-0370", reason = "transitive via zbus (Linux keyring)" },
+    { id = "RUSTSEC-2026-0371", reason = "transitive via zbus (Linux keyring)" },
+    { id = "RUSTSEC-2026-0372", reason = "transitive via zbus (Linux keyring)" },
+    { id = "RUSTSEC-2024-0449", reason = "transitive via serde_yaml_ng" },
+]
+
+[licenses]
+version = 2
+# Everything here may be combined into an Apache-2.0 application. MPL-2.0 is
+# file-level copyleft: fine to link, and no MPL file is modified in this repo.
+# A crate under anything else (GPL, AGPL, SSPL, no license) fails the check.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "Zlib",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+# The SQLCipher source bundle. "blessing" is SQLite's public-domain dedication;
+# WTFPL covers the LibTomCrypt sources it also carries, which this build does
+# not compile (the provider is OpenSSL — db_crypto::cross_version_tests).
+# Allowed for this one crate, not for the tree.
+[[licenses.exceptions]]
+crate = "sqlcipher-src"
+allow = ["blessing", "WTFPL"]
+
+[bans]
+# A tree this size carries several versions of windows-sys, syn and friends;
+# failing on that would be noise.
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# The wry fork Cargo.toml's [patch.crates-io] pins by rev (gotcha #31).
+allow-git = ["https://github.com/bbmediaco/wry"]
