@@ -1,0 +1,14 @@
+js window.INITIAL = '<div>İzmir notes foo</div><div>İzmir bar foo</div>'; window.CARET = ['div','end']; window.setup(); 0
+js window.replaceAll('foo','FOO'); 0
+snap replaceAll foo after İ (end of node)
+js window.replaceAll('bar','X'); 0
+snap replaceAll bar after İ (mid node)
+js ed.focus(); 0
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2

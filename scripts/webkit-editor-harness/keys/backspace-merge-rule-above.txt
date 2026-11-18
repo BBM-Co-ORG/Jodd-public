@@ -1,0 +1,13 @@
+js window.INITIAL = '<div>intro</div><hr><div><br></div><h2>Heading</h2>'; window.CARET = ['h2','start']; window.setup(); 0
+key backspace
+snap Backspace, rule above the empty line
+type z
+snap typed z
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2

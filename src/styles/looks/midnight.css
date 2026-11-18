@@ -1,0 +1,267 @@
+/* Midnight Line — a Jodd look (src/lib/theme.ts › LOOKS).
+ *
+ * Jodd as a transit diagram in midnight enamel: deep blue panes and
+ * porcelain ink at night, porcelain panes and midnight ink by day. Each
+ * account is a line in its own colour (--account-*), and its folders are the
+ * stations on it; the open folder is the lit station. Anuphan throughout.
+ * Signature: the folder tree drawn as a line with stations (Sidebar.svelte).
+ *
+ * Four blocks, like tokens.css: the look's light tokens (and its type and
+ * corners, which are the same in both modes), a prefers-color-scheme dark
+ * block that follows the OS, and flat [data-theme] restatements so an
+ * explicit Light or Dark in Settings beats the OS in either direction. The
+ * last two are copies of the first two, and tokens.test.ts asserts they
+ * match: edit both halves of a pair together.
+ *
+ * Specificity is the mechanism. tokens.css's [data-theme] blocks are
+ * (0,2,0), so this file's base block (0,2,0, later) would beat Lamplit's
+ * dark one; that is fine only because every colour is restated in the
+ * (0,3,0) dark block below. tokens.test.ts keeps that list complete. */
+
+:root[data-look='midnight'] {
+  --font-sans: 'Anuphan', 'IBM Plex Sans Thai', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --surface-editor:      #f7f8fb;
+  --surface-list:        #eef1f6;
+  --surface-sidebar:     #e4e9f1;
+  --surface-panel:       #ffffff;
+  --surface-badge:       #f7f8fb;
+  --surface-sunken:      rgba(14, 24, 48, 0.04);
+  --surface-hover:       rgba(14, 24, 48, 0.05);
+  --surface-active:      rgba(14, 24, 48, 0.08);
+  --border-subtle:       #dde3ec;
+  --border:              #ccd4e0;
+  --border-strong:       #b3bdcd;
+  --text:                #0e1830;
+  --text-secondary:      #2a3854;
+  --text-muted:          #4a5874;
+  --text-inverse:        #ffffff;
+  --text-disabled:       #8a94a8;
+  --accent:              #2a63e0;
+  --accent-action:       #1d4fc4;
+  --accent-hover:        #163d9a;
+  --accent-tint:         #dbe6ff;
+  --accent-on-tint:      #0f2a6b;
+  --accent-wash:         rgba(42, 99, 224, 0.10);
+  --accent-wash-strong:  rgba(42, 99, 224, 0.18);
+  --lamp-glow:           rgba(42, 99, 224, 0.12);
+  --accent-rail:         rgba(42, 99, 224, 0.70);
+  --accent-border:       rgba(42, 99, 224, 0.30);
+  --accent-mark:         #0e1830;
+  --focus:               #2a63e0;
+  --ring-focus:          0 0 0 2px rgba(42, 99, 224, 0.28);
+  --danger:              #b4232a;
+  --danger-wash:         rgba(229, 72, 77, 0.08);
+  --success:             #0f6b45;
+  --success-wash:        rgba(47, 179, 122, 0.10);
+  --warn-wash:           rgba(242, 163, 58, 0.14);
+  --icon-danger:         var(--danger);
+  --icon-pin:            var(--accent-action);
+  --icon-tag:            #6a3fc0;
+  --graph-folder:        #b06a0a;
+  --graph-folder-fill:   #f8ead4;
+  --graph-tag:           #8a5ad0;
+  --graph-tag-fill:      #ece2fa;
+  --graph-link:          #2a63e0;
+  --graph-link-fill:     #e0e9fc;
+  --graph-backlink:      #178a5a;
+  --graph-backlink-fill: #dcf2e8;
+  --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.15);
+  --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.11);
+  --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.25);
+  --scrim:               rgba(0, 0, 0, 0.35);
+  --scrim-strong:        rgba(8, 14, 30, 0.45);
+  --account-icloud:      #2a63e0;
+  --account-gmail:       #16835a;
+  --account-microsoft:   #a85f00;
+  --account-localfs:     #7a4fd0;
+  --account-ssh:         #0f7d86;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-look='midnight'] {
+    --surface-editor:      #182848;
+    --surface-list:        #13203c;
+    --surface-sidebar:     #0e1830;
+    --surface-panel:       #1e3156;
+    --surface-badge:       #24385f;
+    --surface-sunken:      rgba(238, 241, 246, 0.03);
+    --surface-hover:       rgba(238, 241, 246, 0.06);
+    --surface-active:      rgba(238, 241, 246, 0.10);
+    --border-subtle:       #1f3054;
+    --border:              #2a3d64;
+    --border-strong:       #3d5383;
+    --text:                #eef1f6;
+    --text-secondary:      #cdd4e1;
+    --text-muted:          #a9b4c9;
+    --text-inverse:        #0e1830;
+    --text-disabled:       #62708e;
+    --accent:              #3e7bfa;
+    --accent-action:       #94b8ff;
+    --accent-hover:        #b8d0ff;
+    --accent-tint:         #203f7a;
+    --accent-on-tint:      #dfe9ff;
+    --accent-wash:         rgba(62, 123, 250, 0.16);
+    --accent-wash-strong:  rgba(62, 123, 250, 0.28);
+    --lamp-glow:           rgba(62, 123, 250, 0.18);
+    --accent-rail:         rgba(148, 184, 255, 0.80);
+    --accent-border:       rgba(62, 123, 250, 0.45);
+    --accent-mark:         #eef1f6;
+    --focus:               #94b8ff;
+    --ring-focus:          0 0 0 2px rgba(148, 184, 255, 0.45);
+    --danger:              #ff9da0;
+    --danger-wash:         rgba(229, 72, 77, 0.16);
+    --success:             #63d4a2;
+    --success-wash:        rgba(47, 179, 122, 0.16);
+    --warn-wash:           rgba(242, 163, 58, 0.14);
+    --icon-danger:         var(--danger);
+    --icon-pin:            var(--accent-action);
+    --icon-tag:            #c3a6ff;
+    --graph-folder:        #f2a33a;
+    --graph-folder-fill:   #3a3020;
+    --graph-tag:           #c3a6ff;
+    --graph-tag-fill:      #2e2a4e;
+    --graph-link:          #5b93ff;
+    --graph-link-fill:     #1c2f5a;
+    --graph-backlink:      #2fb37a;
+    --graph-backlink-fill: #173a37;
+    --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.45);
+    --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.50);
+    --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.70);
+    --scrim:               rgba(0, 0, 0, 0.62);
+    --scrim-strong:        rgba(4, 8, 18, 0.74);
+    --account-icloud:      #4d86ff;
+    --account-gmail:       #2fb37a;
+    --account-microsoft:   #f2a33a;
+    --account-localfs:     #b694ff;
+    --account-ssh:         #36bfc8;
+  }
+}
+
+/* BEGIN generated data-theme blocks -- do not hand-edit */
+
+:root[data-look='midnight'][data-theme='light'] {
+  --surface-editor:      #f7f8fb;
+  --surface-list:        #eef1f6;
+  --surface-sidebar:     #e4e9f1;
+  --surface-panel:       #ffffff;
+  --surface-badge:       #f7f8fb;
+  --surface-sunken:      rgba(14, 24, 48, 0.04);
+  --surface-hover:       rgba(14, 24, 48, 0.05);
+  --surface-active:      rgba(14, 24, 48, 0.08);
+  --border-subtle:       #dde3ec;
+  --border:              #ccd4e0;
+  --border-strong:       #b3bdcd;
+  --text:                #0e1830;
+  --text-secondary:      #2a3854;
+  --text-muted:          #4a5874;
+  --text-inverse:        #ffffff;
+  --text-disabled:       #8a94a8;
+  --accent:              #2a63e0;
+  --accent-action:       #1d4fc4;
+  --accent-hover:        #163d9a;
+  --accent-tint:         #dbe6ff;
+  --accent-on-tint:      #0f2a6b;
+  --accent-wash:         rgba(42, 99, 224, 0.10);
+  --accent-wash-strong:  rgba(42, 99, 224, 0.18);
+  --lamp-glow:           rgba(42, 99, 224, 0.12);
+  --accent-rail:         rgba(42, 99, 224, 0.70);
+  --accent-border:       rgba(42, 99, 224, 0.30);
+  --accent-mark:         #0e1830;
+  --focus:               #2a63e0;
+  --ring-focus:          0 0 0 2px rgba(42, 99, 224, 0.28);
+  --danger:              #b4232a;
+  --danger-wash:         rgba(229, 72, 77, 0.08);
+  --success:             #0f6b45;
+  --success-wash:        rgba(47, 179, 122, 0.10);
+  --warn-wash:           rgba(242, 163, 58, 0.14);
+  --icon-danger:         var(--danger);
+  --icon-pin:            var(--accent-action);
+  --icon-tag:            #6a3fc0;
+  --graph-folder:        #b06a0a;
+  --graph-folder-fill:   #f8ead4;
+  --graph-tag:           #8a5ad0;
+  --graph-tag-fill:      #ece2fa;
+  --graph-link:          #2a63e0;
+  --graph-link-fill:     #e0e9fc;
+  --graph-backlink:      #178a5a;
+  --graph-backlink-fill: #dcf2e8;
+  --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.15);
+  --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.11);
+  --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.25);
+  --scrim:               rgba(0, 0, 0, 0.35);
+  --scrim-strong:        rgba(8, 14, 30, 0.45);
+  --account-icloud:      #2a63e0;
+  --account-gmail:       #16835a;
+  --account-microsoft:   #a85f00;
+  --account-localfs:     #7a4fd0;
+  --account-ssh:         #0f7d86;
+}
+
+:root[data-look='midnight'][data-theme='dark'] {
+  --surface-editor:      #182848;
+  --surface-list:        #13203c;
+  --surface-sidebar:     #0e1830;
+  --surface-panel:       #1e3156;
+  --surface-badge:       #24385f;
+  --surface-sunken:      rgba(238, 241, 246, 0.03);
+  --surface-hover:       rgba(238, 241, 246, 0.06);
+  --surface-active:      rgba(238, 241, 246, 0.10);
+  --border-subtle:       #1f3054;
+  --border:              #2a3d64;
+  --border-strong:       #3d5383;
+  --text:                #eef1f6;
+  --text-secondary:      #cdd4e1;
+  --text-muted:          #a9b4c9;
+  --text-inverse:        #0e1830;
+  --text-disabled:       #62708e;
+  --accent:              #3e7bfa;
+  --accent-action:       #94b8ff;
+  --accent-hover:        #b8d0ff;
+  --accent-tint:         #203f7a;
+  --accent-on-tint:      #dfe9ff;
+  --accent-wash:         rgba(62, 123, 250, 0.16);
+  --accent-wash-strong:  rgba(62, 123, 250, 0.28);
+  --lamp-glow:           rgba(62, 123, 250, 0.18);
+  --accent-rail:         rgba(148, 184, 255, 0.80);
+  --accent-border:       rgba(62, 123, 250, 0.45);
+  --accent-mark:         #eef1f6;
+  --focus:               #94b8ff;
+  --ring-focus:          0 0 0 2px rgba(148, 184, 255, 0.45);
+  --danger:              #ff9da0;
+  --danger-wash:         rgba(229, 72, 77, 0.16);
+  --success:             #63d4a2;
+  --success-wash:        rgba(47, 179, 122, 0.16);
+  --warn-wash:           rgba(242, 163, 58, 0.14);
+  --icon-danger:         var(--danger);
+  --icon-pin:            var(--accent-action);
+  --icon-tag:            #c3a6ff;
+  --graph-folder:        #f2a33a;
+  --graph-folder-fill:   #3a3020;
+  --graph-tag:           #c3a6ff;
+  --graph-tag-fill:      #2e2a4e;
+  --graph-link:          #5b93ff;
+  --graph-link-fill:     #1c2f5a;
+  --graph-backlink:      #2fb37a;
+  --graph-backlink-fill: #173a37;
+  --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.45);
+  --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.50);
+  --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.60);
+  --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.60);
+  --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.70);
+  --scrim:               rgba(0, 0, 0, 0.62);
+  --scrim-strong:        rgba(4, 8, 18, 0.74);
+  --account-icloud:      #4d86ff;
+  --account-gmail:       #2fb37a;
+  --account-microsoft:   #f2a33a;
+  --account-localfs:     #b694ff;
+  --account-ssh:         #36bfc8;
+}
+
+/* END generated data-theme blocks */

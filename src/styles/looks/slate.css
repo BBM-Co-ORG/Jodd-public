@@ -1,0 +1,254 @@
+/* Slate Ink — a Jodd look (src/lib/theme.ts › LOOKS).
+ *
+ * Jodd as an e-paper slate: matte greys and carbon ink, no hue in the
+ * chrome at all (danger, success and the graph keep a muted ink colour,
+ * because they carry meaning). Selection is inversion: the open folder and
+ * note rows, the primary action and the current find match are ink with
+ * paper-coloured text. Chips keep a pale tint (--accent-tint): several put
+ * --text on it, which an ink tint would hide. Anuphan for the
+ * UI, Noto Serif Thai for the note itself. Square corners.
+ * Signature: selection by inversion (Sidebar.svelte, NoteList.svelte).
+ *
+ * Four blocks, like tokens.css: the look's light tokens (and its type and
+ * corners, which are the same in both modes), a prefers-color-scheme dark
+ * block that follows the OS, and flat [data-theme] restatements so an
+ * explicit Light or Dark in Settings beats the OS in either direction. The
+ * last two are copies of the first two, and tokens.test.ts asserts they
+ * match: edit both halves of a pair together.
+ *
+ * Specificity is the mechanism. tokens.css's [data-theme] blocks are
+ * (0,2,0), so this file's base block (0,2,0, later) would beat Lamplit's
+ * dark one; that is fine only because every colour is restated in the
+ * (0,3,0) dark block below. tokens.test.ts keeps that list complete. */
+
+:root[data-look='slate'] {
+  --font-sans: 'Anuphan', 'IBM Plex Sans Thai', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-note: 'Noto Serif Thai', 'Anuphan', Georgia, serif;
+  --radius-sm: 0;
+  --radius: 0;
+  --radius-lg: 0;
+
+  --surface-editor:      #efefeb;
+  --surface-list:        #e6e6e2;
+  --surface-sidebar:     #dededa;
+  --surface-panel:       #f6f6f3;
+  --surface-badge:       #efefeb;
+  --surface-sunken:      rgba(22, 22, 22, 0.04);
+  --surface-hover:       rgba(22, 22, 22, 0.05);
+  --surface-active:      rgba(22, 22, 22, 0.08);
+  --border-subtle:       #d4d4d0;
+  --border:              #c6c6c2;
+  --border-strong:       #9e9e9a;
+  --text:                #161616;
+  --text-secondary:      #333331;
+  --text-muted:          #52524f;
+  --text-inverse:        #efefeb;
+  --text-disabled:       #8c8c88;
+  --accent:              #161616;
+  --accent-action:       #161616;
+  --accent-hover:        #3a3a38;
+  --accent-tint:         #cfcfcb;
+  --accent-on-tint:      #161616;
+  --accent-wash:         rgba(22, 22, 22, 0.06);
+  --accent-wash-strong:  rgba(22, 22, 22, 0.12);
+  --lamp-glow:           rgba(22, 22, 22, 0.00);
+  --accent-rail:         rgba(22, 22, 22, 0.70);
+  --accent-border:       rgba(22, 22, 22, 0.40);
+  --accent-mark:         #161616;
+  --focus:               #161616;
+  --ring-focus:          0 0 0 2px rgba(22, 22, 22, 0.55);
+  --danger:              #8f1d12;
+  --danger-wash:         rgba(143, 29, 18, 0.07);
+  --success:             #1d5c33;
+  --success-wash:        rgba(29, 92, 51, 0.08);
+  --warn-wash:           rgba(22, 22, 22, 0.07);
+  --icon-danger:         var(--danger);
+  --icon-pin:            var(--accent-action);
+  --icon-tag:            #4a4a47;
+  --graph-folder:        #7a5c18;
+  --graph-folder-fill:   #ece4d0;
+  --graph-tag:           #7a4a9a;
+  --graph-tag-fill:      #e8dfee;
+  --graph-link:          #2f5f8f;
+  --graph-link-fill:     #dde6ef;
+  --graph-backlink:      #2f7048;
+  --graph-backlink-fill: #dbe9df;
+  --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.15);
+  --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.11);
+  --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.25);
+  --scrim:               rgba(0, 0, 0, 0.35);
+  --scrim-strong:        rgba(10, 10, 10, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-look='slate'] {
+    --surface-editor:      #262625;
+    --surface-list:        #212120;
+    --surface-sidebar:     #1c1c1b;
+    --surface-panel:       #2c2c2a;
+    --surface-badge:       #333331;
+    --surface-sunken:      rgba(232, 232, 228, 0.03);
+    --surface-hover:       rgba(232, 232, 228, 0.06);
+    --surface-active:      rgba(232, 232, 228, 0.10);
+    --border-subtle:       #30302e;
+    --border:              #3c3c3a;
+    --border-strong:       #5a5a57;
+    --text:                #e8e8e4;
+    --text-secondary:      #c8c8c4;
+    --text-muted:          #acaca8;
+    --text-inverse:        #1c1c1b;
+    --text-disabled:       #6a6a67;
+    --accent:              #e8e8e4;
+    --accent-action:       #e8e8e4;
+    --accent-hover:        #ffffff;
+    --accent-tint:         #42423f;
+    --accent-on-tint:      #f2f2ee;
+    --accent-wash:         rgba(232, 232, 228, 0.08);
+    --accent-wash-strong:  rgba(232, 232, 228, 0.14);
+    --lamp-glow:           rgba(232, 232, 228, 0.00);
+    --accent-rail:         rgba(232, 232, 228, 0.70);
+    --accent-border:       rgba(232, 232, 228, 0.40);
+    --accent-mark:         #e8e8e4;
+    --focus:               #e8e8e4;
+    --ring-focus:          0 0 0 2px rgba(232, 232, 228, 0.55);
+    --danger:              #f09a8f;
+    --danger-wash:         rgba(240, 154, 143, 0.10);
+    --success:             #8ccb9f;
+    --success-wash:        rgba(140, 203, 159, 0.10);
+    --warn-wash:           rgba(232, 232, 228, 0.08);
+    --icon-danger:         var(--danger);
+    --icon-pin:            var(--accent-action);
+    --icon-tag:            #bdbdb9;
+    --graph-folder:        #cfae6a;
+    --graph-folder-fill:   #36301f;
+    --graph-tag:           #b99ad0;
+    --graph-tag-fill:      #322b38;
+    --graph-link:          #7fa7cf;
+    --graph-link-fill:     #222c36;
+    --graph-backlink:      #7fbf94;
+    --graph-backlink-fill: #223027;
+    --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.45);
+    --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.50);
+    --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.60);
+    --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.70);
+    --scrim:               rgba(0, 0, 0, 0.62);
+    --scrim-strong:        rgba(6, 6, 6, 0.74);
+  }
+}
+
+/* BEGIN generated data-theme blocks -- do not hand-edit */
+
+:root[data-look='slate'][data-theme='light'] {
+  --surface-editor:      #efefeb;
+  --surface-list:        #e6e6e2;
+  --surface-sidebar:     #dededa;
+  --surface-panel:       #f6f6f3;
+  --surface-badge:       #efefeb;
+  --surface-sunken:      rgba(22, 22, 22, 0.04);
+  --surface-hover:       rgba(22, 22, 22, 0.05);
+  --surface-active:      rgba(22, 22, 22, 0.08);
+  --border-subtle:       #d4d4d0;
+  --border:              #c6c6c2;
+  --border-strong:       #9e9e9a;
+  --text:                #161616;
+  --text-secondary:      #333331;
+  --text-muted:          #52524f;
+  --text-inverse:        #efefeb;
+  --text-disabled:       #8c8c88;
+  --accent:              #161616;
+  --accent-action:       #161616;
+  --accent-hover:        #3a3a38;
+  --accent-tint:         #cfcfcb;
+  --accent-on-tint:      #161616;
+  --accent-wash:         rgba(22, 22, 22, 0.06);
+  --accent-wash-strong:  rgba(22, 22, 22, 0.12);
+  --lamp-glow:           rgba(22, 22, 22, 0.00);
+  --accent-rail:         rgba(22, 22, 22, 0.70);
+  --accent-border:       rgba(22, 22, 22, 0.40);
+  --accent-mark:         #161616;
+  --focus:               #161616;
+  --ring-focus:          0 0 0 2px rgba(22, 22, 22, 0.55);
+  --danger:              #8f1d12;
+  --danger-wash:         rgba(143, 29, 18, 0.07);
+  --success:             #1d5c33;
+  --success-wash:        rgba(29, 92, 51, 0.08);
+  --warn-wash:           rgba(22, 22, 22, 0.07);
+  --icon-danger:         var(--danger);
+  --icon-pin:            var(--accent-action);
+  --icon-tag:            #4a4a47;
+  --graph-folder:        #7a5c18;
+  --graph-folder-fill:   #ece4d0;
+  --graph-tag:           #7a4a9a;
+  --graph-tag-fill:      #e8dfee;
+  --graph-link:          #2f5f8f;
+  --graph-link-fill:     #dde6ef;
+  --graph-backlink:      #2f7048;
+  --graph-backlink-fill: #dbe9df;
+  --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.15);
+  --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.11);
+  --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.16);
+  --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.25);
+  --scrim:               rgba(0, 0, 0, 0.35);
+  --scrim-strong:        rgba(10, 10, 10, 0.45);
+}
+
+:root[data-look='slate'][data-theme='dark'] {
+  --surface-editor:      #262625;
+  --surface-list:        #212120;
+  --surface-sidebar:     #1c1c1b;
+  --surface-panel:       #2c2c2a;
+  --surface-badge:       #333331;
+  --surface-sunken:      rgba(232, 232, 228, 0.03);
+  --surface-hover:       rgba(232, 232, 228, 0.06);
+  --surface-active:      rgba(232, 232, 228, 0.10);
+  --border-subtle:       #30302e;
+  --border:              #3c3c3a;
+  --border-strong:       #5a5a57;
+  --text:                #e8e8e4;
+  --text-secondary:      #c8c8c4;
+  --text-muted:          #acaca8;
+  --text-inverse:        #1c1c1b;
+  --text-disabled:       #6a6a67;
+  --accent:              #e8e8e4;
+  --accent-action:       #e8e8e4;
+  --accent-hover:        #ffffff;
+  --accent-tint:         #42423f;
+  --accent-on-tint:      #f2f2ee;
+  --accent-wash:         rgba(232, 232, 228, 0.08);
+  --accent-wash-strong:  rgba(232, 232, 228, 0.14);
+  --lamp-glow:           rgba(232, 232, 228, 0.00);
+  --accent-rail:         rgba(232, 232, 228, 0.70);
+  --accent-border:       rgba(232, 232, 228, 0.40);
+  --accent-mark:         #e8e8e4;
+  --focus:               #e8e8e4;
+  --ring-focus:          0 0 0 2px rgba(232, 232, 228, 0.55);
+  --danger:              #f09a8f;
+  --danger-wash:         rgba(240, 154, 143, 0.10);
+  --success:             #8ccb9f;
+  --success-wash:        rgba(140, 203, 159, 0.10);
+  --warn-wash:           rgba(232, 232, 228, 0.08);
+  --icon-danger:         var(--danger);
+  --icon-pin:            var(--accent-action);
+  --icon-tag:            #bdbdb9;
+  --graph-folder:        #cfae6a;
+  --graph-folder-fill:   #36301f;
+  --graph-tag:           #b99ad0;
+  --graph-tag-fill:      #322b38;
+  --graph-link:          #7fa7cf;
+  --graph-link-fill:     #222c36;
+  --graph-backlink:      #7fbf94;
+  --graph-backlink-fill: #223027;
+  --shadow-raised:       0 1px 4px rgba(0, 0, 0, 0.45);
+  --shadow-card:         0 2px 16px rgba(0, 0, 0, 0.50);
+  --shadow-menu:         0 6px 24px rgba(0, 0, 0, 0.60);
+  --shadow-menu-up:      0 -6px 24px rgba(0, 0, 0, 0.60);
+  --shadow-modal:        0 12px 40px rgba(0, 0, 0, 0.70);
+  --scrim:               rgba(0, 0, 0, 0.62);
+  --scrim-strong:        rgba(6, 6, 6, 0.74);
+}
+
+/* END generated data-theme blocks */
