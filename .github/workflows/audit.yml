@@ -1,0 +1,91 @@
+# Dependency audit — what the lockfiles pull in, checked against the advisory
+# databases and the license allow list.
+#
+# Three triggers, each for a different failure:
+#   - pull_request, only when a manifest, a lockfile or this file changes:
+#     a dependency change is checked before it merges.
+#   - weekly schedule: an advisory published AFTER a dependency merged is the
+#     common case, and no pull request would ever surface it.
+#   - workflow_dispatch: after editing deny.toml.
+#
+# Not part of ci.yml on purpose. An advisory against an unchanged lockfile
+# would turn every unrelated pull request red; here it turns this workflow red
+# and nothing else.
+name: Audit
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.lock'
+      - '**/Cargo.toml'
+      - 'deny.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/audit.yml'
+  schedule:
+    - cron: '17 3 * * 1'   # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Advisories, licenses, sources and bans, per deny.toml. An ignored advisory
+  # carries its reason there.
+  cargo-deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+
+  # High and critical only, across runtime AND dev dependencies: the build
+  # tools run on the release runners, so a compromised dev dependency matters
+  # as much as a runtime one. Low and moderate findings in dev tooling are
+  # left to Dependabot's weekly pull request.
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm audit --audit-level=high
+
+  # Advisory, not a gate: `continue-on-error` keeps the workflow green while
+  # the existing warnings are worked down. ci.yml deliberately runs no clippy
+  # (it would add minutes to every pull request), so this runs on the weekly
+  # schedule and by hand only. Promote it — drop continue-on-error, add
+  # `-D warnings` — once a run comes back clean.
+  clippy:
+    name: clippy (advisory)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tauri Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: clippy
+      # Restore-only: the repo's cache budget belongs to ci.yml and release.yml.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: '. -> target'
+          shared-key: rust
+          save-if: false
+      - name: Clippy
+        env:
+          CARGO_PROFILE_DEV_DEBUG: '0'
+        run: cargo clippy --workspace --all-targets --locked

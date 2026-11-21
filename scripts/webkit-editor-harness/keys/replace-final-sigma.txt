@@ -1,0 +1,12 @@
+js window.INITIAL = '<div>ΟΔΟΣ and οδος</div>'; window.CARET = ['div','end']; window.setup(); 0
+js window.replaceAll('οδος','ROAD'); 0
+snap replaceAll οδος (final sigma, both cases)
+js ed.focus(); 0
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
