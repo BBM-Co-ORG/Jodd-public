@@ -1,0 +1,8 @@
+1515
+[[0,["c","SID_REDACTED","",8]]
+,[1,["S","GSESSION_REDACTED"]]
+,[2,["loungeStatus",{"queueId":"RQ_REDACTED_QUEUE_ID","devices":"[{\"app\":\"lb-v4\",\"capabilities\":\"dsp,dpa,mic,ntb,ipv,ads,asw,apw,pas,dcn,dcp,drq,sads,que,mus\",\"clientName\":\"tvhtml5\",\"experiments\":\"\",\"name\":\"YouTube on TV\",\"theme\":\"cl\",\"id\":\"00000000-0000-4000-8000-000000000001\",\"type\":\"LOUNGE_SCREEN\",\"hasCc\":\"true\",\"deviceInfo\":\"{\\\"brand\\\":\\\"Hisense\\\",\\\"model\\\":\\\"HiSmartTV A4\\\",\\\"year\\\":2020,\\\"os\\\":\\\"Android\\\",\\\"osVersion\\\":\\\"9\\\",\\\"chipset\\\":\\\"m7322\\\",\\\"clientName\\\":\\\"TVHTML5\\\",\\\"clientVersion\\\":\\\"7.20261101.19.00\\\",\\\"dialAdditionalDataSupportLevel\\\":\\\"unsupported\\\",\\\"mdxDialServerType\\\":\\\"MDX_DIAL_SERVER_TYPE_UNKNOWN\\\"}\",\"receiverIdentityMatchStatus\":\"IS_RECEIVER\"},{\"app\":\"web\",\"pairingType\":\"unknown\",\"capabilities\":\"que,dsdtr,atp,mus\",\"clientName\":\"unknown\",\"experiments\":\"\",\"name\":\"Jodd probe\",\"theme\":\"cl\",\"id\":\"00000000-0000-4000-8000-000000000002\",\"type\":\"REMOTE_CONTROL\",\"localChannelEncryptionKey\":\"WSZN70ism3SDUsHguDONUkPQ2AnK8XZEC2Acx6R7aBk\",\"receiverIdentityMatchStatus\":\"DOES_NOT_MATCH_RECEIVER\"}]"}]]
+,[3,["playlistModified",{"listId":"RQ_REDACTED_QUEUE_ID","videoId":"wnXoCNd57Ks"}]]
+,[4,["onAutoplayModeChanged",{"autoplayMode":"UNSUPPORTED"}]]
+,[5,["onPlaylistModeChanged",{"shuffleEnabled":"false","loopEnabled":"false"}]]
+]

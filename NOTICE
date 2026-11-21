@@ -1,0 +1,31 @@
+Jodd
+Copyright 2026 BBM Co., Ltd. and Jodd contributors.
+
+This product includes software developed by BBM Co., Ltd.
+Licensed under the Apache License, Version 2.0 (the "License");
+see the LICENSE file for details.
+
+────────────────────────────────────────────────────────────────────
+
+This product is not affiliated with, endorsed by, or sponsored by
+Apple Inc., Google LLC, or Microsoft Corporation.
+
+"Apple" and "Apple Notes" are trademarks of Apple Inc.
+"Gmail" and "Google" are trademarks of Google LLC.
+"Outlook" and "Microsoft" are trademarks of Microsoft Corporation.
+
+All trademarks are the property of their respective owners and are
+used here for the sole purpose of describing interoperability.
+
+────────────────────────────────────────────────────────────────────
+
+Vendored third-party material in this repository:
+
+  src-tauri/proto/   Apple Notes document schema, from icloud-md v0.6.2
+                     by Adam Coddington. MIT License; see
+                     src-tauri/proto/LICENSE-icloud-md and PROVENANCE.md.
+
+Binary distributions also include the Rust crates pinned in Cargo.lock
+and the npm packages pinned in package-lock.json, each under its own
+license. Those two files are the complete list of what a release was
+built from.

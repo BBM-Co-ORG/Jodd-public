@@ -1,0 +1,6 @@
+Backspace, plain line belo | <div>intro</div><hr><div>plain</div>   caret="plain"@0
+typed z                    | <div>intro</div><hr><div>zplain</div>   caret="zplain"@1
+cmd+z #1                   | <div>intro</div><hr><div><br></div><div>plain</div>   caret=DIV@0
+cmd+z #2                   | <div>intro</div><hr><div><br></div><div>plain</div>   caret=DIV@0
+redo #1                    | <div>intro</div><hr><div>zplain</div>   caret="zplain"@1
+redo #2                    | <div>intro</div><hr><div>zplain</div>   caret="zplain"@1

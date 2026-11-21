@@ -1,0 +1,14 @@
+js window.INITIAL = "<div>plain</div><div>two</div>"; window.CARET = ["div:last-child","end"]; window.setup(); 0
+type x
+snap typed x
+js window.replaceAll("two","TWO"); window.replaceAll("plain","P"); 0
+snap two replaceAlls, no typing between
+js ed.focus(); 0
+key cmd+z
+snap cmd+z #1
+key cmd+z
+snap cmd+z #2
+key shift+cmd+z
+snap redo #1
+key shift+cmd+z
+snap redo #2
