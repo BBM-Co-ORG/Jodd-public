@@ -1,0 +1,33 @@
+[
+  {"name":"simple","lines":["Status: active","Type: project"],"props":[
+    {"key":"status","key_display":"Status","value":"active","value_date":null},
+    {"key":"type","key_display":"Type","value":"project","value_date":null}]},
+  {"name":"blank_ends_block","lines":["Status: active","","Type: project"],"props":[
+    {"key":"status","key_display":"Status","value":"active","value_date":null}]},
+  {"name":"prose_ends_block","lines":["Status: active","met the client today","Type: x"],"props":[
+    {"key":"status","key_display":"Status","value":"active","value_date":null}]},
+  {"name":"nbsp","lines":["Status: active"],"props":[
+    {"key":"status","key_display":"Status","value":"active","value_date":null}]},
+  {"name":"no_space_is_not_property","lines":["Status:active"],"props":[]},
+  {"name":"thai_key","lines":["สถานะ: รอ"],"props":[
+    {"key":"สถานะ","key_display":"สถานะ","value":"รอ","value_date":null}]},
+  {"name":"repeat_kept","lines":["Tag: a","tag: b"],"props":[
+    {"key":"tag","key_display":"Tag","value":"a","value_date":null},
+    {"key":"tag","key_display":"tag","value":"b","value_date":null}]},
+  {"name":"comma_is_one_value","lines":["Client: Backyard&Co, Ltd"],"props":[
+    {"key":"client","key_display":"Client","value":"Backyard&Co, Ltd","value_date":null}]},
+  {"name":"date_value","lines":["Deadline: 2026-11-25"],"props":[
+    {"key":"deadline","key_display":"Deadline","value":"2026-11-25","value_date":"2026-11-25"}]},
+  {"name":"non_iso_date_value","lines":["Deadline: 25/11"],"props":[
+    {"key":"deadline","key_display":"Deadline","value":"25/11","value_date":null}]},
+  {"name":"key_33_chars","lines":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: x"],"props":[]},
+  {"name":"key_32_chars","lines":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: x"],"props":[
+    {"key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","key_display":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","value":"x","value_date":null}]},
+  {"name":"url_line_is_not_property","lines":["https://example.com"],"props":[]},
+  {"name":"key_must_start_with_letter","lines":["1st: a"],"props":[]},
+  {"name":"value_may_contain_colon","lines":["Time: 10:30"],"props":[
+    {"key":"time","key_display":"Time","value":"10:30","value_date":null}]},
+  {"name":"empty_value_is_not_property","lines":["Status: "],"props":[]},
+  {"name":"thai_key_combining_marks","lines":["\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e17\u0e35\u0e48\u0e15\u0e31\u0e49\u0e07: x"],"props":[
+    {"key":"\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e17\u0e35\u0e48\u0e15\u0e31\u0e49\u0e07","key_display":"\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e17\u0e35\u0e48\u0e15\u0e31\u0e49\u0e07","value":"x","value_date":null}]}
+]

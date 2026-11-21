@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Android adaptive-icon BACKGROUND layer.
+
+  The counterpart of `source-android-foreground.svg`: full-bleed on purpose.
+  Android crops the outer 18dp of every layer and then masks what remains, so
+  the background is the half that is SUPPOSED to lose its corners — it exists
+  to fill whatever silhouette the launcher chooses. Nothing readable may live
+  here; the mark is in the foreground.
+
+  Without a background image the layer falls back to the flat
+  `@color/ic_launcher_background`, which `tauri icon` writes as #fff — and a
+  white note card on a white plate is an invisible icon. The Ink & Dusk ramp
+  runs on the diagonal so the gradient reads across a circle and a squircle
+  alike, rather than banding along one edge.
+
+  The ramp is fitted to the 72dp viewport (16.7%–83.3% of the layer), not to
+  the layer: run it corner to corner instead and both ends of the palette sit
+  in the 18dp reserve that gets cropped, leaving the visible icon a flat
+  middle purple. Past those stops the gradient pads with its end colours,
+  which is all the reserve needs to carry.
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="inkAndDusk" x1="16.7%" y1="16.7%" x2="83.3%" y2="83.3%">
+      <stop offset="0%" stop-color="#2b3e7a"/>
+      <stop offset="55%" stop-color="#7a6caf"/>
+      <stop offset="100%" stop-color="#d9a866"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#inkAndDusk)"/>
+</svg>

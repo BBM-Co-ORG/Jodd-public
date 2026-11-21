@@ -1,0 +1,5 @@
+addTag, note ends in a cod | <pre>code</pre><div>#work</div>   caret=BODY@3
+cmd+z #1                   | <pre>code</pre>   caret="code"@4
+cmd+z #2                   | <pre>code</pre>   caret="code"@4
+redo #1                    | <pre>code</pre><div>#work</div>   caret="#work"@5
+redo #2                    | <pre>code</pre><div>#work</div>   caret="#work"@5

@@ -1,0 +1,8 @@
+Backspace, empty line is f | <h2>Heading</h2>   caret="Heading"@0
+typed z                    | <h2>zHeading</h2>   caret="zHeading"@1
+cmd+z #1                   | <div><br></div><h2>Heading</h2>   caret=DIV@0
+cmd+z #2                   | <div><br></div><h2>Heading</h2>   caret=DIV@0
+cmd+z #3                   | <div><br></div><h2>Heading</h2>   caret=DIV@0
+redo #1                    | <h2>zHeading</h2>   caret="zHeading"@1
+redo #2                    | <h2>zHeading</h2>   caret="zHeading"@1
+redo #3                    | <h2>zHeading</h2>   caret="zHeading"@1
