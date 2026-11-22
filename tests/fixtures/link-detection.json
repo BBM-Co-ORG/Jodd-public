@@ -1,0 +1,182 @@
+{
+  "cases": [
+    {
+      "name": "an unterminated [[ on one line is skipped; a later [[Real]] still counts",
+      "html": "<div>[[draft</div><div>[[Real]]</div>",
+      "links": [{ "kind": "wikilink", "text": "Real" }]
+    },
+    {
+      "name": "a wikilink cannot span a block boundary",
+      "html": "<div>[[a</div><div>b]]</div>",
+      "links": []
+    },
+    {
+      "name": "an inline tag inside a url does not split it",
+      "html": "https://x.co/<b>path</b>",
+      "links": [{ "kind": "url", "text": "https://x.co/path" }]
+    },
+    {
+      "name": "an inline tag inside a wikilink does not split it",
+      "html": "[[foo<b>bar</b>]]",
+      "links": [{ "kind": "wikilink", "text": "foobar" }]
+    },
+    {
+      "name": "a balanced closing paren is part of the url",
+      "html": "https://en.wikipedia.org/wiki/Foo_(bar)",
+      "links": [{ "kind": "url", "text": "https://en.wikipedia.org/wiki/Foo_(bar)" }]
+    },
+    {
+      "name": "an unbalanced closing paren is not part of the url",
+      "html": "(see https://a.co/x)",
+      "links": [{ "kind": "url", "text": "https://a.co/x" }]
+    },
+    {
+      "name": "a url ends at [ and the wikilink after it is still found",
+      "html": "https://x/[[a]]",
+      "links": [
+        { "kind": "url", "text": "https://x/" },
+        { "kind": "wikilink", "text": "a" }
+      ]
+    },
+    {
+      "name": "a scheme glued to a preceding ASCII letter is not a url",
+      "html": "foohttps://a.co",
+      "links": []
+    },
+    {
+      "name": "a scheme after a non-ASCII letter is a url, and Thai stays in it",
+      "html": "ดูhttps://a.co/ไทย",
+      "links": [{ "kind": "url", "text": "https://a.co/ไทย" }]
+    },
+    {
+      "name": "a decoded nbsp ends the url",
+      "html": "https://a.co/page&nbsp;then",
+      "links": [{ "kind": "url", "text": "https://a.co/page" }]
+    },
+    {
+      "name": "trailing sentence punctuation is trimmed repeatedly",
+      "html": "https://a.co/x.,;:!?'",
+      "links": [{ "kind": "url", "text": "https://a.co/x" }]
+    },
+    {
+      "name": "a link inside <a> is still a link",
+      "html": "<a href=\"https://a.co\">https://a.co</a>",
+      "links": [{ "kind": "url", "text": "https://a.co" }]
+    },
+    {
+      "name": "head, title and style content is not note text",
+      "html": "<html><head><title>https://t.co</title><style>a{background:url(https://s.co)}</style></head><body><div>x</div></body></html>",
+      "links": []
+    },
+    {
+      "name": "a br ends the url",
+      "html": "https://a.co<br>next",
+      "links": [{ "kind": "url", "text": "https://a.co" }]
+    },
+    {
+      "name": "the scheme is case-insensitive and the match keeps its case",
+      "html": "HTTPS://A.co",
+      "links": [{ "kind": "url", "text": "HTTPS://A.co" }]
+    },
+    {
+      "name": "the same url and the same wikilink twice are deduped, first-seen order",
+      "html": "<div>https://a.co [[A]] https://b.co [[B]] https://a.co [[A]]</div>",
+      "links": [
+        { "kind": "url", "text": "https://a.co" },
+        { "kind": "wikilink", "text": "A" },
+        { "kind": "url", "text": "https://b.co" },
+        { "kind": "wikilink", "text": "B" }
+      ]
+    },
+    {
+      "name": "wikilink inner text is trimmed",
+      "html": "[[  Spaced  ]]",
+      "links": [{ "kind": "wikilink", "text": "Spaced" }]
+    },
+    {
+      "name": "a whitespace-only wikilink is nothing",
+      "html": "[[ ]]",
+      "links": []
+    },
+    {
+      "name": "a url inside a wikilink is part of the wikilink, never a second link",
+      "html": "[[https://a.co]]",
+      "links": [{ "kind": "wikilink", "text": "https://a.co" }]
+    },
+    {
+      "name": "an encoded quote ends the url",
+      "html": "https://a.co&quot;x",
+      "links": [{ "kind": "url", "text": "https://a.co" }]
+    },
+    {
+      "name": "an encoded > ends the url",
+      "html": "https://a.co&gt;x",
+      "links": [{ "kind": "url", "text": "https://a.co" }]
+    },
+    {
+      "name": "a ] ends the url",
+      "html": "https://a.co]x",
+      "links": [{ "kind": "url", "text": "https://a.co" }]
+    },
+    {
+      "name": "a [[ inside an unterminated [[ restarts the wikilink",
+      "html": "[[a [[b]]",
+      "links": [{ "kind": "wikilink", "text": "b" }]
+    },
+    {
+      "name": "http:// is a url too",
+      "html": "http://plain.co",
+      "links": [{ "kind": "url", "text": "http://plain.co" }]
+    },
+    {
+      "name": "a scheme glued to a preceding digit is not a url",
+      "html": "1https://a.co",
+      "links": []
+    },
+    {
+      "name": "an unbalanced ) ends the url even with text after it",
+      "html": "https://a.co/x)y",
+      "links": [{ "kind": "url", "text": "https://a.co/x" }]
+    },
+    {
+      "name": "a bare scheme is not a url",
+      "html": "http://",
+      "links": []
+    },
+    {
+      "name": "a scheme with only trimmed punctuation after it is not a url",
+      "html": "https://.",
+      "links": []
+    },
+    {
+      "name": "a scheme followed by an unbalanced paren is not a url",
+      "html": "http://)",
+      "links": []
+    },
+    {
+      "name": "U+0085 is link space and ends the url",
+      "html": "https://a.co/x\u0085then",
+      "links": [{ "kind": "url", "text": "https://a.co/x" }]
+    },
+    {
+      "name": "a raw U+00A0 ends the url",
+      "html": "https://a.co/x\u00a0then",
+      "links": [{ "kind": "url", "text": "https://a.co/x" }]
+    },
+    {
+      "name": "U+FEFF is not link space and stays inside the url",
+      "html": "https://a.co/x\ufeffx",
+      "links": [{ "kind": "url", "text": "https://a.co/x\ufeffx" }]
+    },
+    {
+      "name": "wikilink inner text is trimmed of link space, U+0085 included",
+      "html": "[[\u0085Name ]]",
+      "links": [{ "kind": "wikilink", "text": "Name" }]
+    },
+    {
+      "name": "an empty wikilink followed by a stray ] is nothing",
+      "html": "[[]]]",
+      "links": []
+    }
+  ]
+}

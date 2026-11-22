@@ -1,0 +1,4 @@
+pasted 1                   | <div>baseaa</div><div>bb</div><div><br></div><div>cc</div>   caret="cc"@2   MENU=["Paste"]
+pasted 2                   | <div>baseaa</div><div>bb</div><div><br></div><div>ccaa</div><div>bb</div><div><br></div><div>cc</div>   caret="cc"@2   MENU=["Paste"]
+cmd+z #1                   | <div>baseaa</div><div>bb</div><div><br></div><div>cc</div>   caret="cc"@2
+cmd+z #2                   | <div>base</div>   caret=DIV@1

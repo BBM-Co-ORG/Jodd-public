@@ -1,0 +1,1018 @@
+// @vitest-environment jsdom
+//
+// Share to Jodd's capture sheet (spec 2026-10-06-share-to-jodd §3.5, §6).
+// Mounted, not just its helpers, because the cold-start drain and the
+// reset-on-new-capture are reactive behaviour (gotcha #28).
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mount, unmount, flushSync } from 'svelte';
+import { get } from 'svelte/store';
+import { readFileSync } from 'node:fs';
+import './__fixtures__/dialogStub';
+
+const invoke = vi.fn();
+const events = vi.hoisted(() => ({ handlers: {} as Record<string, (e: { payload: unknown }) => void> }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
+const openUrl = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+    events.handlers[name] = cb;
+    return () => {};
+  }),
+}));
+
+import CaptureSheet from './CaptureSheet.svelte';
+import { accounts, currentAccount, capabilitiesByAccount, error } from '../stores/notes';
+import { extractModalOpen, settingsRoute, settingsDirty } from '../stores/ui';
+import { ACTION_ITEMS_LINKS_REASON } from '../ingestSources';
+import { extractPrefill, pendingCaptures, captureSnoozed, focusCapture, AI_MODES, AS_IS_DESCRIPTION, type PendingCapture } from '../capture';
+
+const CAPTURE: PendingCapture = {
+  id: 'c1',
+  payload: { url: 'https://a.example/post', text: 'worth keeping', title: null },
+  links: ['https://a.example/post'],
+  default_title: 'worth keeping',
+  received_at_ms: 0,
+};
+
+let queue: PendingCapture[] = [];
+// `peek_link_metadata` (spec D9): a test replaces this to control the answer.
+let peekImpl: (url: string) => Promise<{ title: string } | null> = async () => null;
+
+async function settle() {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  flushSync();
+}
+
+function render() {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const host = mount(CaptureSheet, { target });
+  flushSync();
+  return { target, host };
+}
+
+function button(target: HTMLElement, label: string): HTMLButtonElement {
+  // The AI chips carry a description under the label; match the label.
+  const b = [...target.querySelectorAll('button')].find((x) => (x.querySelector('.make-option-label, .capture-chip-label') ?? x).textContent?.trim() === label);
+  if (!b) throw new Error(`no button "${label}"`);
+  return b as HTMLButtonElement;
+}
+
+// The folder picker under "New note": folded away behind "Change" until
+// asked for, then a search box over a list of rows. Each helper opens it.
+function openFolders(target: HTMLElement) {
+  if (target.querySelector('#capture-folder')) return;
+  const change = target.querySelector<HTMLButtonElement>('.capture-folder-change');
+  if (!change) throw new Error('no folder picker');
+  change.click();
+  flushSync();
+}
+
+function folderRows(target: HTMLElement): Array<[string | undefined, string | undefined]> {
+  openFolders(target);
+  return [...target.querySelectorAll<HTMLButtonElement>('.capture-folders button')].map((b) => [
+    b.dataset.folder,
+    b.textContent?.trim(),
+  ]);
+}
+
+function chosenFolder(target: HTMLElement): string | undefined {
+  openFolders(target);
+  return target.querySelector<HTMLButtonElement>('.capture-folders button.active')?.dataset.folder;
+}
+
+function pickFolder(target: HTMLElement, path: string) {
+  openFolders(target);
+  const row = [...target.querySelectorAll<HTMLButtonElement>('.capture-folders button')].find((b) => b.dataset.folder === path);
+  if (!row) throw new Error(`no folder row "${path}"`);
+  row.click();
+  flushSync();
+}
+
+// Pick an AI mode under "What to make", then the primary hands it over.
+function makeWith(target: HTMLElement, label: string) {
+  button(target, label).click();
+  flushSync();
+  button(target, 'Make note').click();
+}
+
+function searchFolders(target: HTMLElement, query: string) {
+  openFolders(target);
+  const input = target.querySelector('#capture-folder') as HTMLInputElement;
+  input.value = query;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  flushSync();
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  invoke.mockReset();
+  queue = [CAPTURE];
+  peekImpl = async () => null;
+  invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+    switch (cmd) {
+      case 'peek_link_metadata':
+        return peekImpl(args?.url as string);
+      case 'take_pending_captures':
+        return queue;
+      case 'save_capture':
+        queue = queue.filter((c) => c.id !== args?.captureId);
+        return { uuid: 'NEW', label: (args?.folder as string | null) ?? 'Notes/Inbox' };
+      case 'append_capture':
+        queue = [];
+        return { uuid: 'N1', label: 'Notes/Reading' };
+      case 'list_capture_folders':
+        return args?.accountId === 'gmail:a@x'
+          ? { default: 'Notes/Inbox', folders: ['Notes', 'Notes/Reading'] }
+          : { default: 'Notes', folders: ['Notes'] };
+      case 'search_notes':
+        return [
+          { uuid: 'N1', id: 'm1', title: 'Reading list', label: 'Notes/Reading', account_id: 'gmail:a@x' },
+          { uuid: 'L1', id: 'm2', title: 'Locked note', label: 'Notes', account_id: 'gmail:a@x', push_blocked_by_remote: true },
+        ];
+      case 'discard_capture':
+        queue = queue.filter((c) => c.id !== args?.captureId);
+        return true;
+      case 'list_cached_notes_in_folder':
+        return [];
+      default:
+        return null;
+    }
+  });
+  accounts.set([
+    { id: 'gmail:a@x', email: 'a@x', added_at: '' },
+    { id: 'microsoft:b@x', email: 'b@x', added_at: '' },
+  ]);
+  capabilitiesByAccount.set({
+    'microsoft:b@x': { has_trash: false, writes: { notes: false, relocate: false, folders: false, sidecars: false } },
+  });
+  currentAccount.set('gmail:a@x');
+  extractModalOpen.set(false);
+  settingsRoute.set(null);
+  settingsDirty.set(false);
+  extractPrefill.set(null);
+  pendingCaptures.set([]);
+  captureSnoozed.set(false);
+  error.set(null);
+  document.body.innerHTML = '';
+});
+
+// ExtractPrefill is a union since "What's on my TV"; the sheet only ever sets the capture arm.
+function prefillTitle(): string | undefined {
+  const p = get(extractPrefill);
+  return p?.kind === 'capture' ? p.title : undefined;
+}
+
+describe('CaptureSheet', () => {
+  it('shows a capture that was queued before it mounted (cold start), with no event', async () => {
+    const { target, host } = render();
+    await settle();
+    expect(target.querySelector('dialog')?.open).toBe(true);
+    expect((target.querySelector('#capture-title') as HTMLInputElement).value).toBe('worth keeping');
+    expect(target.textContent).toContain('https://a.example/post');
+    unmount(host);
+  });
+
+  it('offers only accounts that can write notes', async () => {
+    const { target, host } = render();
+    await settle();
+    const options = [...target.querySelectorAll('#capture-account option')].map((o) => (o as HTMLOptionElement).value);
+    expect(options).toEqual(['gmail:a@x']);
+    unmount(host);
+  });
+
+  it('Save sends the capture id and title, never the content, then closes', async () => {
+    const { target, host } = render();
+    await settle();
+    const title = target.querySelector('#capture-title') as HTMLInputElement;
+    title.value = '  Kept  ';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    button(target, 'Save').click();
+    await settle();
+    const save = invoke.mock.calls.find((c) => c[0] === 'save_capture');
+    expect(save?.[1]).toEqual({ accountId: 'gmail:a@x', captureId: 'c1', title: 'Kept', folder: null });
+    expect(JSON.stringify(save?.[1])).not.toContain('worth keeping');
+    expect(target.querySelector('dialog')).toBeNull();
+    unmount(host);
+  });
+
+  it('Discard writes nothing', async () => {
+    const { target, host } = render();
+    await settle();
+    button(target, 'Discard').click();
+    await settle();
+    expect(invoke.mock.calls.some((c) => c[0] === 'save_capture')).toBe(false);
+    expect(invoke).toHaveBeenCalledWith('discard_capture', { captureId: 'c1' });
+    expect(target.querySelector('dialog')).toBeNull();
+    unmount(host);
+  });
+
+  it('shows what was shared — its source, the link and the text — apart from the form', async () => {
+    const { target, host } = render();
+    await settle();
+    const shared = target.querySelector('section[aria-label="What was shared"]') as HTMLElement;
+    expect(shared.textContent).toContain('from a.example');
+    expect(shared.textContent).toContain('https://a.example/post');
+    expect(shared.textContent).toContain('worth keeping');
+    expect(shared.querySelector('input, select')).toBeNull();
+    unmount(host);
+  });
+
+  // 2026-11-20, phone: the AI modes sat under the whole form and the folder
+  // list caught every swipe, so they could not be reached. The sheet now
+  // keeps Make a note with AI's order: where it goes, what to make, what
+  // from, then the options, with "Add to" last.
+  it('keeps the AI dialog order: where it goes, what to make, what was shared, the options', async () => {
+    const { target, host } = render();
+    await settle();
+    const order = [
+      target.querySelector('.capture-destination'),
+      target.querySelector('[role="radiogroup"][aria-labelledby="capture-make-heading"]'),
+      target.querySelector('section[aria-label="What was shared"]'),
+      target.querySelector('#capture-title'),
+      target.querySelector('[role="radiogroup"][aria-labelledby="capture-addto-heading"]'),
+    ] as HTMLElement[];
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(target.querySelector('.capture-destination')?.textContent).toBe('Saves to Inbox in a@x.');
+    unmount(host);
+  });
+
+  it('the first line follows the folder, and Add to existing note names the note', async () => {
+    const { target, host } = render();
+    await settle();
+    pickFolder(target, 'Notes/Reading');
+    expect(target.querySelector('.capture-destination')?.textContent).toBe('Saves to Notes/Reading in a@x.');
+    button(target, 'Existing note').click();
+    flushSync();
+    expect(target.querySelector('.capture-destination')?.textContent).toBe('Adds to the note you pick below.');
+    unmount(host);
+  });
+
+  it('the folder list is folded until Change, and a pick folds it again', async () => {
+    const { target, host } = render();
+    await settle();
+    expect(target.querySelector('.capture-folders')).toBeNull();
+    expect(target.querySelector('.capture-picked')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Saving to Inbox');
+    button(target, 'Change').click();
+    flushSync();
+    expect(target.querySelector('.capture-folders')).not.toBeNull();
+    // Done sits above the list, not under it: the list is part of the page
+    // and can run long, so under it Done was a long scroll away.
+    const row = target.querySelector('.capture-folder-row')!;
+    const list = target.querySelector('.capture-folders')!;
+    expect(row.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    pickFolder(target, 'Notes/Reading');
+    expect(target.querySelector('.capture-folders')).toBeNull();
+    expect(target.querySelector('.capture-picked')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Saving to Notes/Reading');
+    // Done folds it without changing the choice.
+    button(target, 'Change').click();
+    flushSync();
+    button(target, 'Done').click();
+    flushSync();
+    expect(target.querySelector('.capture-folders')).toBeNull();
+    expect(target.querySelector('.capture-picked')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Saving to Notes/Reading');
+    unmount(host);
+  });
+
+  // S23 device pass, 2026-11-21: with Change open, a swipe that started on
+  // the folder list scrolled only the list (max-height + overflow-y: auto),
+  // and the page under it did not move. jsdom has no scrolling, so this
+  // guards the rule itself: the result lists are part of the sheet's scroll.
+  it('the folder and note lists are not scrollers of their own', () => {
+    // Every rule that styles the list box, under any of its classes: in
+    // 0.52.0 `.capture-folders { max-height: 24vh }` kept the box short and
+    // its rows drew over Add to, while this guard read only `.capture-results`.
+    // `.capture-result` (one row) is not matched; rows may clip their text.
+    const src = readFileSync('src/lib/components/CaptureSheet.svelte', 'utf8');
+    const style = src.slice(src.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = [...style.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(([, selector]) =>
+      /\.capture-(results|folders)\b/.test(selector),
+    );
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [, selector, body] of rules) {
+      expect(`${selector.trim()} { ${body.trim()} }`).not.toMatch(/overflow|height/);
+    }
+  });
+
+  it('a shared link opens in the browser', async () => {
+    const { target, host } = render();
+    await settle();
+    (target.querySelector('.capture-url') as HTMLButtonElement).click();
+    expect(openUrl).toHaveBeenCalledWith('https://a.example/post');
+    unmount(host);
+  });
+
+  it('a share with no links shows Action items its own description, not the links caveat', async () => {
+    queue = [{ ...CAPTURE, payload: { url: null, text: 'Decided: ship Friday. Kai owns the notes.', title: null }, links: [] }];
+    const { target, host } = render();
+    await settle();
+    const desc = button(target, 'Action items').querySelector('.capture-chip-desc')?.textContent?.trim();
+    expect(desc).toBe(AI_MODES.find((m) => m.value === 'action_items')!.description);
+    expect(target.textContent).not.toContain(ACTION_ITEMS_LINKS_REASON);
+    unmount(host);
+  });
+
+  it('offers As it is and every AI mode; an AI mode is chosen here and handed over by the primary', async () => {
+    const { target, host } = render();
+    await settle();
+    const group = '[aria-labelledby="capture-make-heading"] button';
+    const modes = [...target.querySelectorAll(group)].map((b) => b.querySelector('.capture-chip-label')?.textContent?.trim());
+    expect(modes).toEqual(['As it is', 'Key points', 'Summarize', 'Action items', 'Expand bullets', 'Transcript']);
+    // The same one-line descriptions as the Make a note dialog, visible before choosing.
+    const descs = [...target.querySelectorAll(group)].map((b) => b.querySelector('.capture-chip-desc')?.textContent?.trim());
+    // This share carries a link, so Action items says what the dialog will:
+    // it reads pasted text only (LessonExtractModal's linksOnly row).
+    expect(descs).toEqual([
+      AS_IS_DESCRIPTION,
+      ...AI_MODES.map((m) => (m.value === 'action_items' ? ACTION_ITEMS_LINKS_REASON : m.description)),
+    ]);
+    expect(descs[1]).not.toBe(descs[2]);
+    button(target, 'Summarize').click();
+    flushSync();
+    // Choosing does not leave the sheet; it changes what the primary does.
+    expect(get(extractModalOpen)).toBe(false);
+    expect(target.querySelector('.capture-make-hint')?.textContent).toBe('Next, you see what it will read.');
+    // The as-is options go: the AI dialog asks for its own.
+    expect(target.querySelector('#capture-title')).toBeNull();
+    expect(target.querySelector('.capture-folder-change')).toBeNull();
+    button(target, 'Make note').click();
+    await settle();
+    expect(get(extractPrefill)).toEqual({
+      kind: 'capture',
+      captureId: 'c1',
+      text: 'https://a.example/post\n\nworth keeping',
+      // D13: the default is not something the person typed.
+      title: '',
+      workflow: 'summarize',
+    });
+    expect(get(extractModalOpen)).toBe(true);
+    expect(target.querySelector('dialog')).toBeNull();
+    // Closing the modal without a note brings the still-queued capture back.
+    extractModalOpen.set(false);
+    await settle();
+    expect(target.querySelector('dialog')?.open).toBe(true);
+    unmount(host);
+  });
+
+  it('remembers the last choice for the next share, and As it is goes back to Save', async () => {
+    let { target, host } = render();
+    await settle();
+    expect(target.querySelector('[aria-labelledby="capture-make-heading"] [aria-checked="true"] .capture-chip-label')?.textContent).toBe('As it is');
+    button(target, 'Key points').click();
+    flushSync();
+    unmount(host);
+    ({ target, host } = render());
+    await settle();
+    expect(target.querySelector('[aria-labelledby="capture-make-heading"] [aria-checked="true"] .capture-chip-label')?.textContent).toBe('Key points');
+    expect(button(target, 'Make note')).toBeTruthy();
+    button(target, 'As it is').click();
+    flushSync();
+    button(target, 'Save').click();
+    await settle();
+    expect(invoke.mock.calls.some((c) => c[0] === 'save_capture')).toBe(true);
+    expect(get(extractModalOpen)).toBe(false);
+    unmount(host);
+  });
+
+  it('a capture drained before the accounts loaded still preselects an account (cold start)', async () => {
+    accounts.set([]);
+    const { target, host } = render();
+    await settle();
+    expect(target.querySelector('dialog')).toBeNull();
+    accounts.set([{ id: 'gmail:a@x', email: 'a@x', added_at: '' }]);
+    await settle();
+    expect((target.querySelector('#capture-account') as HTMLSelectElement).value).toBe('gmail:a@x');
+    expect(button(target, 'Save').disabled).toBe(false);
+    unmount(host);
+  });
+
+  it('waits for sign-in when there is no account', async () => {
+    accounts.set([]);
+    const { target, host } = render();
+    await settle();
+    expect(target.querySelector('dialog')).toBeNull();
+    unmount(host);
+  });
+
+  it('a share that works clears the error a failed share left on the bar', async () => {
+    queue = [];
+    const { host } = render();
+    await settle();
+    events.handlers['capture-error']({ payload: "Couldn't read what was shared: it carried no link and no text." });
+    expect(get(error)).toContain("Couldn't read what was shared");
+    queue = [CAPTURE];
+    events.handlers['capture-received']({ payload: null });
+    await settle();
+    expect(get(error)).toBeNull();
+    unmount(host);
+  });
+
+  it('a share that works leaves any other error on the bar alone', async () => {
+    queue = [];
+    const { host } = render();
+    await settle();
+    events.handlers['capture-error']({ payload: "Couldn't read what was shared: it carried no link and no text." });
+    error.set('Account gmail:a@x needs to be signed in again.');
+    queue = [CAPTURE];
+    events.handlers['capture-received']({ payload: null });
+    await settle();
+    expect(get(error)).toBe('Account gmail:a@x needs to be signed in again.');
+    unmount(host);
+  });
+
+  it('a capture-received event re-reads the queue; a capture-error reaches ErrorBar', async () => {
+    queue = [];
+    const { target, host } = render();
+    await settle();
+    expect(target.querySelector('dialog')).toBeNull();
+    queue = [CAPTURE];
+    events.handlers['capture-received']({ payload: null });
+    await settle();
+    expect(target.querySelector('dialog')?.open).toBe(true);
+    events.handlers['capture-error']({ payload: "Couldn't read what was shared: it carried no link and no text." });
+    expect(get(error)).toContain("Couldn't read what was shared");
+    unmount(host);
+  });
+
+  it('a new note goes to Inbox by default, or to the folder chosen from the ones Rust offers', async () => {
+    const { target, host } = render();
+    await settle();
+    expect(folderRows(target)).toEqual([['', 'Inbox (default)'], ['Notes', 'Notes'], ['Notes/Reading', 'Notes/Reading']]);
+    expect(chosenFolder(target)).toBe('');
+    expect(target.querySelector('.capture-folder-hint')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Saved as-is. In Inbox, Organize can file it later.',
+    );
+    pickFolder(target, 'Notes/Reading');
+    expect(target.querySelector('.capture-picked')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Saving to Notes/Reading');
+    button(target, 'Save').click();
+    await settle();
+    const save = invoke.mock.calls.find((c) => c[0] === 'save_capture');
+    expect(save?.[1]).toEqual({ accountId: 'gmail:a@x', captureId: 'c1', title: 'worth keeping', folder: 'Notes/Reading' });
+    unmount(host);
+  });
+
+  // With many folders the old dropdown could only be scrolled.
+  it('the folder list narrows as you type, and Enter takes the first row', async () => {
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_capture_folders'
+        ? { default: 'Notes/Inbox', folders: ['Notes', 'Notes/Reading', 'Notes/Work/Projects', 'Notes/Work/ประชุม'] }
+        : base(cmd, args),
+    );
+    const { target, host } = render();
+    await settle();
+    searchFolders(target, 'work');
+    expect(folderRows(target)).toEqual([
+      ['Notes/Work/Projects', 'Notes/Work/Projects'],
+      ['Notes/Work/ประชุม', 'Notes/Work/ประชุม'],
+    ]);
+    // The default is filtered out, but where the note goes is still said.
+    expect(target.querySelector('.capture-picked')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Saving to Inbox');
+    searchFolders(target, 'ประชุม');
+    const input = target.querySelector('#capture-folder') as HTMLInputElement;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    flushSync();
+    expect(chosenFolder(target)).toBe('Notes/Work/ประชุม');
+    // Typing the default's name finds it again.
+    searchFolders(target, 'inbox');
+    expect(folderRows(target)).toEqual([['', 'Inbox (default)']]);
+    searchFolders(target, 'nothing like this');
+    expect(folderRows(target)).toEqual([]);
+    expect(target.querySelector('.capture-result-none')?.textContent).toBe('No folder matches “nothing like this”.');
+    // A search that hides the choice doesn't change it.
+    button(target, 'Save').click();
+    await settle();
+    const save = invoke.mock.calls.find((c) => c[0] === 'save_capture');
+    expect(save?.[1]).toMatchObject({ folder: 'Notes/Work/ประชุม' });
+    unmount(host);
+  });
+
+  it('changing the account forgets the folder chosen in the other one', async () => {
+    capabilitiesByAccount.set({});
+    const { target, host } = render();
+    await settle();
+    searchFolders(target, 'read');
+    pickFolder(target, 'Notes/Reading');
+    const acct = target.querySelector('#capture-account') as HTMLSelectElement;
+    acct.value = 'microsoft:b@x';
+    acct.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    // The search was for the other account's folders: it goes too, and the
+    // list is folded again.
+    expect(target.querySelector('#capture-folder')).toBeNull();
+    expect(chosenFolder(target)).toBe('');
+    expect((target.querySelector('#capture-folder') as HTMLInputElement).value).toBe('');
+    // Outlook can't create the Inbox: the default says where the note really goes.
+    expect(folderRows(target)).toEqual([
+      ['', 'Notes (default)'],
+      ['Notes', 'Notes'],
+    ]);
+    button(target, 'Save').click();
+    await settle();
+    const save = invoke.mock.calls.find((c) => c[0] === 'save_capture');
+    expect(save?.[1]).toMatchObject({ accountId: 'microsoft:b@x', folder: null });
+    unmount(host);
+  });
+
+  it('Add to note: search, pick a note, and append — sending the ids, never the content', async () => {
+    const { target, host } = render();
+    await settle();
+    button(target, 'Existing note').click();
+    flushSync();
+    expect(target.querySelector('#capture-title')).toBeNull();
+    const add = button(target, 'Add to note');
+    expect(add.disabled).toBe(true);
+    const search = target.querySelector('#capture-target') as HTMLInputElement;
+    search.value = 'reading';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    await settle();
+    const results = [...target.querySelectorAll('.capture-result')].map((b) => b.textContent);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toContain('Reading list');
+    // A note iCloud refuses is locked in the editor; the sheet doesn't offer it.
+    expect(target.textContent).not.toContain('Locked note');
+    (target.querySelector('.capture-result') as HTMLButtonElement).click();
+    flushSync();
+    expect(target.textContent).toContain('Reading list');
+    expect(search.value).toBe('Reading list');
+    expect(add.disabled).toBe(false);
+    add.click();
+    await settle();
+    const call = invoke.mock.calls.find((c) => c[0] === 'append_capture');
+    expect(call?.[1]).toEqual({ accountId: 'gmail:a@x', captureId: 'c1', targetUuid: 'N1' });
+    expect(invoke.mock.calls.some((c) => c[0] === 'save_capture')).toBe(false);
+    expect(target.querySelector('dialog')).toBeNull();
+    unmount(host);
+  });
+
+  // 2026-11-05: a share on a device a day behind appended to the note as this
+  // device last saw it. Picking the note asks for its folder to be re-read
+  // from the backend, in the background — Save never waits for it.
+  it('picking a note asks for its folder to be pulled, without holding Save', async () => {
+    const asked: unknown[] = [];
+    const onAsk = (e: Event) => asked.push((e as CustomEvent).detail);
+    window.addEventListener('jodd:refresh-folder', onAsk);
+    const { target, host } = render();
+    await settle();
+    button(target, 'Existing note').click();
+    flushSync();
+    const search = target.querySelector('#capture-target') as HTMLInputElement;
+    search.value = 'reading';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    await settle();
+    expect(asked).toHaveLength(0);
+    (target.querySelector('.capture-result') as HTMLButtonElement).click();
+    flushSync();
+    expect(asked).toEqual([{ accountId: 'gmail:a@x', folder: 'Notes/Reading' }]);
+    expect(button(target, 'Add to note').disabled).toBe(false);
+    window.removeEventListener('jodd:refresh-folder', onAsk);
+    unmount(host);
+  });
+
+  it('an account that stops taking notes takes its picked note with it', async () => {
+    capabilitiesByAccount.set({});
+    const { target, host } = render();
+    await settle();
+    button(target, 'Existing note').click();
+    flushSync();
+    const search = target.querySelector('#capture-target') as HTMLInputElement;
+    search.value = 'reading';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    await settle();
+    (target.querySelector('.capture-result') as HTMLButtonElement).click();
+    flushSync();
+    expect(button(target, 'Add to note').disabled).toBe(false);
+    // gmail:a@x can no longer write: the sheet falls back to microsoft:b@x.
+    capabilitiesByAccount.set({
+      'gmail:a@x': { has_trash: true, writes: { notes: false, relocate: false, folders: false, sidecars: false } },
+    });
+    await settle();
+    expect((target.querySelector('#capture-account') as HTMLSelectElement).value).toBe('microsoft:b@x');
+    expect(button(target, 'Add to note').disabled).toBe(true);
+    expect(search.value).toBe('');
+    unmount(host);
+  });
+
+  const SECOND_WITH_LINK: PendingCapture = {
+    id: 'c2',
+    payload: { url: 'https://www.tiktok.com/@u/video/1', text: null, title: null },
+    links: ['https://www.tiktok.com/@u/video/1'],
+    // The SAME default as c1: only the sequence guard can tell them apart.
+    default_title: 'worth keeping',
+    received_at_ms: 1,
+  };
+
+  const SECOND: PendingCapture = {
+    id: 'c2',
+    payload: { url: null, text: 'second share', title: null },
+    links: [],
+    default_title: 'second share',
+    received_at_ms: 1,
+  };
+
+  async function saveInto(target: HTMLElement, path: string) {
+    pickFolder(target, path);
+    button(target, 'Save').click();
+    await settle();
+  }
+
+  // Live pass 2026-10-09: two shares were waiting; the second one appeared
+  // in the same sheet with the folder silently back on Inbox, so a second
+  // Save filed it there. Where things go is kept; what was shared is not.
+  it('the next shared item keeps where the last one was filed, and says it is a new item', async () => {
+    queue = [CAPTURE, SECOND];
+    const { target, host } = render();
+    await settle();
+    await saveInto(target, 'Notes/Reading');
+    expect((target.querySelector('#capture-title') as HTMLInputElement).value).toBe('second share');
+    expect(chosenFolder(target)).toBe('Notes/Reading');
+    expect(target.querySelector('.capture-saved')?.textContent).toContain('Saved to Notes/Reading');
+    button(target, 'Save').click();
+    await settle();
+    const saves = invoke.mock.calls.filter((c) => c[0] === 'save_capture').map((c) => c[1]);
+    expect(saves).toEqual([
+      { accountId: 'gmail:a@x', captureId: 'c1', title: 'worth keeping', folder: 'Notes/Reading' },
+      { accountId: 'gmail:a@x', captureId: 'c2', title: 'second share', folder: 'Notes/Reading' },
+    ]);
+    unmount(host);
+  });
+
+  it('a share that arrives after the queue emptied starts fresh, with no notice', async () => {
+    const { target, host } = render();
+    await settle();
+    await saveInto(target, 'Notes/Reading');
+    expect(target.querySelector('dialog')).toBeNull();
+    queue = [SECOND];
+    events.handlers['capture-received']({ payload: null });
+    await settle();
+    expect(chosenFolder(target)).toBe('');
+    expect(target.querySelector('.capture-saved')).toBeNull();
+    unmount(host);
+  });
+
+  it('a kept folder the next item can no longer use goes back to the default', async () => {
+    queue = [CAPTURE, SECOND];
+    const { target, host } = render();
+    await settle();
+    // By the time the second item shows, Notes/Reading has been deleted.
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_capture_folders' && queue[0]?.id === 'c2' ? { default: 'Notes/Inbox', folders: ['Notes'] } : base(cmd, args),
+    );
+    await saveInto(target, 'Notes/Reading');
+    expect(chosenFolder(target)).toBe('');
+    unmount(host);
+  });
+
+  it('the next item keeps Add to existing note and its note; Discard clears the notice', async () => {
+    queue = [CAPTURE, SECOND];
+    const { target, host } = render();
+    await settle();
+    button(target, 'Existing note').click();
+    flushSync();
+    const search = target.querySelector('#capture-target') as HTMLInputElement;
+    search.value = 'reading';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    await settle();
+    (target.querySelector('.capture-result') as HTMLButtonElement).click();
+    flushSync();
+    invoke.mockImplementationOnce(async () => {
+      queue = [SECOND];
+      return { uuid: 'N1', label: 'Notes/Reading' };
+    });
+    button(target, 'Add to note').click();
+    await settle();
+    expect(target.querySelector('.capture-saved')?.textContent).toContain('Added to Reading list');
+    expect(button(target, 'Add to note').disabled).toBe(false);
+    button(target, 'Discard').click();
+    await settle();
+    expect(target.querySelector('.capture-saved')).toBeNull();
+    unmount(host);
+  });
+  // ── Spec D9 / D13: a title for a shared video link ───────────────────────
+  function deferredPeek() {
+    let resolve!: (v: { title: string } | null) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<{ title: string } | null>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  }
+  const titleInput = (target: HTMLElement) => target.querySelector('#capture-title') as HTMLInputElement;
+  function typeTitle(target: HTMLElement, value: string) {
+    const input = titleInput(target);
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+  }
+
+  it('asks for a title once, for the first link only', async () => {
+    const { host } = render();
+    await settle();
+    await settle();
+    expect(invoke.mock.calls.filter((c) => c[0] === 'peek_link_metadata')).toEqual([['peek_link_metadata', { url: 'https://a.example/post' }]]);
+    unmount(host);
+  });
+
+  it('a_peeked_title_replaces_only_an_untouched_default', async () => {
+    const peek = deferredPeek();
+    peekImpl = () => peek.promise;
+    const { target, host } = render();
+    await settle();
+    expect(titleInput(target).value).toBe('worth keeping');
+    peek.resolve({ title: 'Caption \u2014 Author' });
+    await settle();
+    expect(titleInput(target).value).toBe('Caption \u2014 Author');
+    unmount(host);
+  });
+
+  it('a title the person typed is never replaced by a late peek', async () => {
+    const peek = deferredPeek();
+    peekImpl = () => peek.promise;
+    const { target, host } = render();
+    await settle();
+    typeTitle(target, 'Mine');
+    peek.resolve({ title: 'Caption \u2014 Author' });
+    await settle();
+    expect(titleInput(target).value).toBe('Mine');
+    unmount(host);
+  });
+
+  it('typing the default back is still typing: the peek leaves it alone', async () => {
+    const peek = deferredPeek();
+    peekImpl = () => peek.promise;
+    const { target, host } = render();
+    await settle();
+    typeTitle(target, 'worth keeping');
+    peek.resolve({ title: 'Caption \u2014 Author' });
+    await settle();
+    expect(titleInput(target).value).toBe('worth keeping');
+    unmount(host);
+  });
+
+  it('a failed or empty peek leaves the default, and saving never waits for it', async () => {
+    peekImpl = () => new Promise(() => {}); // never answers
+    const { target, host } = render();
+    await settle();
+    button(target, 'Save').click();
+    await settle();
+    expect(invoke.mock.calls.find((c) => c[0] === 'save_capture')?.[1]).toMatchObject({ title: 'worth keeping' });
+    unmount(host);
+
+    queue = [CAPTURE];
+    document.body.innerHTML = '';
+    peekImpl = async () => { throw new Error('offline'); };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const second = render();
+    await settle();
+    expect(titleInput(second.target).value).toBe('worth keeping');
+    unmount(second.host);
+  });
+
+  it('a late peek for a capture that has gone does not touch the next one', async () => {
+    const first = deferredPeek();
+    peekImpl = (url) => (url === 'https://a.example/post' ? first.promise : Promise.resolve(null));
+    const withLink: PendingCapture = { ...SECOND_WITH_LINK };
+    queue = [CAPTURE, withLink];
+    const { target, host } = render();
+    await settle();
+    button(target, 'Save').click(); // c1 saved; c2 is now at the head
+    await settle();
+    expect(titleInput(target).value).toBe('worth keeping');
+    first.resolve({ title: 'Stale \u2014 c1' });
+    await settle();
+    expect(titleInput(target).value).toBe('worth keeping');
+    unmount(host);
+  });
+
+  it('a peeked title is what a plain Save uses', async () => {
+    peekImpl = async () => ({ title: 'Caption \u2014 Author' });
+    const { target, host } = render();
+    await settle();
+    button(target, 'Save').click();
+    await settle();
+    expect(invoke.mock.calls.find((c) => c[0] === 'save_capture')?.[1]).toMatchObject({ title: 'Caption \u2014 Author' });
+    unmount(host);
+  });
+
+  it('an_untouched_title_is_not_forwarded_to_extract', async () => {
+    // Neither the host/first-line default nor a peeked title is an override.
+    peekImpl = async () => ({ title: 'Caption \u2014 Author' });
+    const { target, host } = render();
+    await settle();
+    expect(titleInput(target).value).toBe('Caption \u2014 Author');
+    makeWith(target, 'Key points');
+    await settle();
+    expect(prefillTitle()).toBe('');
+    unmount(host);
+  });
+
+  it('a_typed_title_is_forwarded', async () => {
+    const { target, host } = render();
+    await settle();
+    typeTitle(target, '  My title  ');
+    makeWith(target, 'Summarize');
+    await settle();
+    expect(prefillTitle()).toBe('My title');
+    unmount(host);
+  });
+
+  it('each capture starts untouched: a title typed for one is not forwarded for the next', async () => {
+    queue = [CAPTURE, SECOND];
+    const { target, host } = render();
+    await settle();
+    typeTitle(target, 'Mine');
+    button(target, 'Save').click();
+    await settle();
+    expect(titleInput(target).value).toBe('second share');
+    makeWith(target, 'Key points');
+    await settle();
+    expect(prefillTitle()).toBe('');
+    unmount(host);
+  });
+  it('a peek that answers after the queue emptied writes nothing', async () => {
+    const peek = deferredPeek();
+    peekImpl = () => peek.promise;
+    const { target, host } = render();
+    await settle();
+    button(target, 'Save').click();
+    await settle();
+    expect(target.querySelector('dialog')).toBeNull();
+    peek.resolve({ title: 'Late \u2014 Author' });
+    await settle();
+    // The same capture comes back (same id, so the form is not reset): it must
+    // show its own default, not the title a dead peek left behind.
+    queue = [CAPTURE];
+    events.handlers['capture-received']({ payload: null });
+    await settle();
+    expect(titleInput(target).value).toBe('worth keeping');
+    unmount(host);
+  });
+
+  // Live 2026-11-07, Galaxy Tab S7: a share arrived while Settings was open.
+  // The sheet and the AI dialog opened over Settings, and the note the AI made
+  // opened UNDER it — the user saw Settings and thought the work was lost.
+  // A share is a new task: Settings closes first, before the sheet takes the
+  // screen, so the overlays (and Android's Back entries) close top-down.
+  describe('a share over Settings', () => {
+    it('closes a clean Settings before the sheet shows', async () => {
+      settingsRoute.set('accounts/gmail:a@x');
+      const { target, host } = render();
+      await settle();
+      expect(get(settingsRoute)).toBeNull();
+      expect(target.querySelector('dialog')?.open).toBe(true);
+      unmount(host);
+    });
+
+    it('leaves Settings open when it holds unsaved edits, and shows the sheet over it', async () => {
+      settingsRoute.set('accounts/gmail:a@x');
+      settingsDirty.set(true);
+      const { target, host } = render();
+      await settle();
+      expect(get(settingsRoute)).toBe('accounts/gmail:a@x');
+      expect(target.querySelector('dialog')?.open).toBe(true);
+      unmount(host);
+    });
+
+    it('a snoozed share does not close Settings opened after it', async () => {
+      const { target, host } = render();
+      await settle();
+      (target.querySelector('dialog button[aria-label="Close"]') as HTMLButtonElement).click();
+      await settle();
+      settingsRoute.set('ai');
+      await settle();
+      expect(get(settingsRoute)).toBe('ai');
+      expect(target.querySelector('dialog')).toBeNull();
+      unmount(host);
+    });
+  });
+
+  // Spec §3.5: dismissing is not discarding. Every Modal close path (Esc, the
+  // ✕, the backdrop) puts the sheet away with the capture still queued; the
+  // next share shows it again; returning to the foreground does not.
+  describe('dismiss snoozes', () => {
+    const wrote = () => invoke.mock.calls.some((c) => c[0] === 'discard_capture' || c[0] === 'save_capture');
+
+    it('Esc snoozes: nothing is written, the capture stays queued, the next share shows it again', async () => {
+      const { target, host } = render();
+      await settle();
+      const dialog = target.querySelector('dialog')!;
+      dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await settle();
+      expect(target.querySelector('dialog')).toBeNull();
+      expect(wrote()).toBe(false);
+      expect(get(pendingCaptures).map((c) => c.id)).toEqual(['c1']);
+      events.handlers['capture-received']({ payload: null });
+      await settle();
+      expect(target.querySelector('dialog')?.open).toBe(true);
+      unmount(host);
+    });
+
+    it('the ✕ and the backdrop snooze too; coming back to the foreground does not show it again', async () => {
+      const { target, host } = render();
+      await settle();
+      (target.querySelector('dialog button[aria-label="Close"]') as HTMLButtonElement).click();
+      await settle();
+      expect(target.querySelector('dialog')).toBeNull();
+      document.dispatchEvent(new Event('visibilitychange'));
+      await settle();
+      expect(target.querySelector('dialog')).toBeNull();
+      // A share that arrives afterwards still shows it; the backdrop snoozes again.
+      events.handlers['capture-received']({ payload: null });
+      await settle();
+      const dialog = target.querySelector('dialog')!;
+      expect(dialog.open).toBe(true);
+      dialog.click(); // the backdrop: a click on the <dialog> itself
+      await settle();
+      expect(target.querySelector('dialog')).toBeNull();
+      expect(wrote()).toBe(false);
+      expect(get(pendingCaptures).map((c) => c.id)).toEqual(['c1']);
+      unmount(host);
+    });
+
+    it('a snoozed queue leaves a pill that reopens it', async () => {
+      const { target, host } = render();
+      await settle();
+      expect(target.querySelector('.capture-pill')).toBeNull();
+      (target.querySelector('dialog button[aria-label="Close"]') as HTMLButtonElement).click();
+      await settle();
+      const pill = target.querySelector<HTMLButtonElement>('.capture-pill')!;
+      expect(pill.textContent).toContain('1');
+      pill.click();
+      await settle();
+      expect(target.querySelector('dialog')?.open).toBe(true);
+      expect(target.querySelector('.capture-pill')).toBeNull();
+      unmount(host);
+    });
+
+    it('a capture can be picked out of order from the queue, and stays first across drains', async () => {
+      const second: PendingCapture = { ...CAPTURE, id: 'c2', default_title: 'second one', payload: { url: null, text: 'second', title: null }, links: [] };
+      queue = [CAPTURE, second];
+      const { target, host } = render();
+      await settle();
+      expect((target.querySelector('#capture-title') as HTMLInputElement).value).toBe('worth keeping');
+      (target.querySelector('.capture-count-btn') as HTMLButtonElement).click();
+      await settle();
+      const rows = [...target.querySelectorAll<HTMLButtonElement>('.capture-queue button')];
+      expect(rows.length).toBe(2);
+      rows[1].click();
+      await settle();
+      expect((target.querySelector('#capture-title') as HTMLInputElement).value).toBe('second one');
+      // Rust still returns oldest-first; the pick survives the next drain.
+      document.dispatchEvent(new Event('visibilitychange'));
+      await settle();
+      expect((target.querySelector('#capture-title') as HTMLInputElement).value).toBe('second one');
+      unmount(host);
+    });
+
+    it('a click inside the sheet does not snooze it', async () => {
+      const { target, host } = render();
+      await settle();
+      (target.querySelector('#capture-title') as HTMLInputElement).click();
+      await settle();
+      expect(target.querySelector('dialog')?.open).toBe(true);
+      unmount(host);
+    });
+
+    it('keys stay in the sheet: app shortcuts never see them', async () => {
+      const seen = vi.fn();
+      window.addEventListener('keydown', seen);
+      const { target, host } = render();
+      await settle();
+      (target.querySelector('#capture-title') as HTMLInputElement).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', metaKey: true, bubbles: true }),
+      );
+      expect(seen).not.toHaveBeenCalled();
+      window.removeEventListener('keydown', seen);
+      unmount(host);
+    });
+
+    it('hides while Extract is open, and comes back when it closes', async () => {
+      const { target, host } = render();
+      await settle();
+      extractModalOpen.set(true);
+      await settle();
+      expect(target.querySelector('dialog')).toBeNull();
+      extractModalOpen.set(false);
+      await settle();
+      expect(target.querySelector('dialog')?.open).toBe(true);
+      unmount(host);
+    });
+  });
+
+  it('Save / Add to note is the primary; Discard is not', async () => {
+    const { target, host } = render();
+    await settle();
+    expect(button(target, 'Save').classList.contains('primary')).toBe(true);
+    expect(button(target, 'Discard').classList.contains('primary')).toBe(false);
+    button(target, 'Existing note').click();
+    flushSync();
+    expect(button(target, 'Add to note').classList.contains('primary')).toBe(true);
+    unmount(host);
+  });
+});

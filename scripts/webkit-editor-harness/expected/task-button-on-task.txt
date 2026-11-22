@@ -1,0 +1,6 @@
+checklist button on a task | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div>next</div>   caret=DIV@2
+typed !                    | <div><input type="checkbox" contenteditable="false">&nbsp;ship it!</div><div>next</div>   caret=" ship it!"@9
+cmd+z #1                   | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div>next</div>   caret=DIV@2
+cmd+z #2                   | <div><input type="checkbox" contenteditable="false">&nbsp;ship it</div><div>next</div>   caret=DIV@2
+redo #1                    | <div><input type="checkbox" contenteditable="false">&nbsp;ship it!</div><div>next</div>   caret=" ship it!"@9
+redo #2                    | <div><input type="checkbox" contenteditable="false">&nbsp;ship it!</div><div>next</div>   caret=" ship it!"@9

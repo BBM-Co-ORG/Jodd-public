@@ -1,0 +1,19 @@
+[
+  {"name":"blank_lines_stand","html":"<div><br></div><div>Status:&nbsp;x</div><div><br></div><div><br></div><div>y</div>","lines":["","Status: x","","","y"]},
+  {"name":"br_inside_a_block_splits_it","html":"<div>Status: a<br>Owner: b</div><div>text</div>","lines":["Status: a","Owner: b","text"]},
+  {"name":"bare_text_and_br","html":"Status: a<br>Owner: b<div>c</div>","lines":["Status: a","Owner: b","c"]},
+  {"name":"trailing_br_ends_the_line_once","html":"<div>Status: a<br></div><div>Owner: b</div>","lines":["Status: a","Owner: b"]},
+  {"name":"list_item_keeps_its_dash","html":"<ul><li>Status: x</li></ul><div>y</div>","lines":["- Status: x","y"]},
+  {"name":"h1_to_h3_keep_hashes_h4_does_not","html":"<h1>A: b</h1><h2>C: d</h2><h3>E: f</h3><h4>G: h</h4>","lines":["# A: b","## C: d","### E: f","G: h"]},
+  {"name":"checkbox_row_keeps_its_box","html":"<div><input type=\"checkbox\">&nbsp;Status: x</div><div><input type=\"checkbox\" checked=\"\">&nbsp;done</div>","lines":["[ ] Status: x","[x] done"]},
+  {"name":"leading_empty_div_is_a_blank_line","html":"<div></div><div>Status: x</div>","lines":["","Status: x"]},
+  {"name":"whitespace_between_inline_elements","html":"<div><b>Status:</b> <i>x</i></div>","lines":["Status: x"]},
+  {"name":"leading_and_trailing_spaces_drop","html":"<div>  Status:   x  </div>","lines":["Status: x"]},
+  {"name":"pre_lines_are_lines","html":"<pre>Status: x\nOwner:  y</pre><div>z</div>","lines":["Status: x","Owner:  y","z"]},
+  {"name":"pre_ending_in_newline","html":"<pre>a\n</pre><div>b</div>","lines":["a","","b"]},
+  {"name":"text_around_a_nested_block","html":"<div>Status: a<div>Owner: b</div>tail</div>","lines":["Status: a","Owner: b","tail"]},
+  {"name":"style_and_comment_are_not_text","html":"<style>p{}</style><!-- c --><div>Status: a</div>","lines":["Status: a"]},
+  {"name":"hr_is_a_boundary_not_a_line","html":"a<hr>b<div>c</div>","lines":["a","b","c"]},
+  {"name":"only_a_blank_line","html":"<div><br></div>","lines":[]},
+  {"name":"thai_and_emoji","html":"<div>สถานะ:&nbsp;รอ</div><div>ship 📅 2026-11-25</div>","lines":["สถานะ: รอ","ship 📅 2026-11-25"]}
+]

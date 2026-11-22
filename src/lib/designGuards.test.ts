@@ -1,0 +1,1022 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const COMPONENT_DIR = 'src/lib/components';
+
+// The component directory, plus its `settings/` pages (Settings' sections),
+// `sidebar/` parts (the phone Folders pane) and `backup/` dialogs (backup
+// and restore), so every guard below covers them as well.
+const COMPONENT_DIRS = [
+  COMPONENT_DIR,
+  join(COMPONENT_DIR, 'settings'),
+  join(COMPONENT_DIR, 'sidebar'),
+  join(COMPONENT_DIR, 'backup'),
+];
+
+export function sourceFiles(): { path: string; text: string }[] {
+  const files = COMPONENT_DIRS.flatMap((dir) =>
+    readdirSync(dir)
+      .filter((f) => f.endsWith('.svelte'))
+      .map((f) => join(dir, f)),
+  );
+  files.push('src/App.svelte');
+  return files.map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+}
+
+// Reports "file:line  match" so a failure names the exact site to fix.
+export function findAll(re: RegExp): string[] {
+  const hits: string[] = [];
+  for (const { path, text } of sourceFiles()) {
+    text.split('\n').forEach((line, i) => {
+      // An attribute selector like [style*='background-color: rgb(255,255,255)']
+      // contains colour text, but it is a PATTERN matching content Apple Notes
+      // sent us -- not a value this app paints with. Tokenising it would break
+      // the match. Strip those before scanning so the colour guards keep their
+      // meaning ("do not hardcode a colour you could tokenise") without
+      // flagging content-matching selectors. `^=` too: the near-black text
+      // rule anchors a declaration at the attribute's start.
+      const scan = line.replace(/\[style[*^]='[^']*'( i)?\]/g, '[style-selector]');
+      for (const m of scan.matchAll(re)) hits.push(`${path}:${i + 1}  ${m[0]}`);
+    });
+  }
+  return hits;
+}
+
+// Finds the index of the '>' that closes the tag opened at `start` (which
+// must point at the tag's leading '<'). Tracks quote state and {}
+// nesting so it isn't fooled by a '>' inside a string, or inside an
+// interpolated attribute expression -- e.g. an arrow function's `=>` or a
+// multi-statement handler `onclick={(e) => { ... }}`. A naive
+// `[^>]*`-style regex stops at the FIRST '>' it meets, which is exactly
+// the '>' inside `=>`, not the real tag close -- that bug is why the
+// previous version of the icon-button test only ever inspected 3 of 9
+// icon-only buttons in the tree (every button whose only interactive
+// attribute was a bare handler reference, with no arrow function, slipped
+// past it).
+export function findTagEnd(text: string, start: number): number {
+  let i = start;
+  let braceDepth = 0;
+  let quote: string | null = null;
+  while (i < text.length) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') { i += 2; continue; }
+      if (c === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; i++; continue; }
+    if (c === '{') { braceDepth++; i++; continue; }
+    if (c === '}') { braceDepth--; i++; continue; }
+    if (c === '>' && braceDepth === 0) return i;
+    i++;
+  }
+  return -1;
+}
+
+// A `font-weight` that is not a weight token or inherit (optionally
+// !important). `(?!-)` keeps `font-weight-*` custom properties out, and
+// `(?=\S)` stops the spaces before the value backtracking past the check.
+const WEIGHT_DECL = /font-weight(?!-) *: *(?=\S)(?!(?:var\(--weight-(?:regular|semibold|bold)\)|inherit) *(?:!important *)?;)[^;]*;/g;
+// A `font` shorthand carrying a literal weight: a 100-900 number or a weight
+// keyword. `font-family`, `font-size` and the rest are not matched (`font:`
+// must follow `font` directly), nor is `font: inherit`.
+const FONT_SHORTHAND_WEIGHT = /(?<![-\w])font *: *[^;]*?(?<![\w-])(?:[1-9]00|bold|bolder|lighter|normal)(?![\w-])[^;]*;/g;
+
+describe('colour discipline', () => {
+  it('has no un-spaced rgba() spelling', () => {
+    expect(findAll(/rgba\(\d+,\d/g)).toEqual([]);
+  });
+
+  it('has no surviving pre-Tier-1 blue in rgba form', () => {
+    // The four blues the Tier 1 accent unification was meant to eliminate.
+    const olds = /rgba\((?:74, 144, 226|37, 99, 235|74, 107, 138|179, 153, 89), [^)]*\)/g;
+    expect(findAll(olds)).toEqual([]);
+  });
+
+  it('has no raw accent rgba — --accent-* tokens exist for these', () => {
+    expect(findAll(/rgba\(201, 124, 31, [^)]*\)/g)).toEqual([]);
+  });
+
+  it('has no raw danger rgba', () => {
+    expect(findAll(/rgba\(220, 50, 50, [^)]*\)/g)).toEqual([]);
+  });
+
+  it('has no raw rgba() left anywhere in components', () => {
+    // Every alpha must be a token, or dark mode cannot flip it.
+    expect(findAll(/rgba\([^)]*\)/g)).toEqual([]);
+  });
+});
+
+describe('icon discipline', () => {
+  // No file is exempt. The auth screen's emoji logo (an apple, an arrow, a
+  // window) was the last one; the brand mark replaced it (2026-11-09).
+  const ALLOWED_FILES = new Set<string>();
+
+  // Sites where an <Icon> component physically cannot go. Each is commented
+  // in place. Keyed file -> glyph so the exemption cannot silently widen.
+  //
+  // NOTE: the NoteEditor entry below (⋯, ●) is documentary only, not
+  // enforced — neither glyph is in the CHROME set (both are typographic
+  // marks, like the copy's own "⋯ › …" menu paths), so the guard below never flags them and this entry exempts
+  // nothing. Only the LlmProviderSettings ✓ entry is load-bearing (✓ IS in
+  // CHROME). Kept for documentation so a future reader can find all three
+  // documented exemptions in one place, but do not mistake the first two
+  // for proof those sites are covered by the guard.
+  const EXEMPT: Record<string, string[]> = {
+    // ⋯ inside a data-placeholder ATTRIBUTE; ● inside a CSS content: rule.
+    'src/lib/components/NoteEditor.svelte': ['⋯', '●'],
+    // ✓ built by JS string concatenation, not markup.
+    'src/lib/components/LlmProviderSettings.svelte': ['✓'],
+  };
+
+  // The exact replace-set from the plan's Icon inventory. Nothing else counts:
+  // → ← ● ○ ⓘ ─ are typographic marks and stay.
+  const CHROME = new Set([
+    '\u{1F4C1}', '\u{1F4A1}', '\u{1F50D}', '\u{1F570}', '\u{1F5D1}', '\u{1F4CC}',
+    '\u{1F517}', '\u{1F578}', '\u{1F4CE}', '\u{1F464}', '\u{1F441}', '\u{1F3F7}',
+    '\u{1F4DD}', '\u{1F648}', '✕', '✓', '❝', '☐',
+    '↩', '▸', '▾', '⚙', '✎', '✏',
+    '⎘', '↻',
+    // The tablet's Folders toggle was a ☰ glyph until 2026-11-13: it is
+    // <Icon name="menu"> now, and the glyph must not come back.
+    '☰',
+  ]);
+
+  it('has no emoji or control glyphs left in UI chrome', () => {
+    const hits: string[] = [];
+    for (const { path, text } of sourceFiles()) {
+      if (ALLOWED_FILES.has(path)) continue;
+      const exempt = EXEMPT[path] ?? [];
+      text.split('\n').forEach((line, i) => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return;
+        for (const ch of [...line]) {
+          if (CHROME.has(ch) && !exempt.includes(ch)) hits.push(`${path}:${i + 1}  ${ch}`);
+        }
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+
+  // Returns every icon-only <button>...</button> found in `text`: the open
+  // tag is located by brace-aware scanning (see findTagEnd), then the body
+  // between the tag close and the next </button> must be nothing but a
+  // single self-closing <Icon .../> (whitespace-trimmed).
+  function findIconOnlyButtons(text: string): { openTag: string; full: string }[] {
+    const results: { openTag: string; full: string }[] = [];
+    const openRe = /<button\b/g;
+    let m: RegExpExecArray | null;
+    while ((m = openRe.exec(text))) {
+      const tagStart = m.index;
+      const tagEnd = findTagEnd(text, tagStart);
+      if (tagEnd === -1) continue;
+      const closeIdx = text.indexOf('</button>', tagEnd + 1);
+      if (closeIdx === -1) continue;
+      const openTag = text.slice(tagStart, tagEnd + 1);
+      const body = text.slice(tagEnd + 1, closeIdx).trim();
+      if (/^<Icon\b[^>]*\/>$/.test(body)) {
+        results.push({ openTag, full: text.slice(tagStart, closeIdx + '</button>'.length) });
+      }
+      openRe.lastIndex = tagEnd + 1; // resume scanning after this tag's open
+    }
+    return results;
+  }
+
+  it('gives every icon-only button an accessible name', () => {
+    const hits: string[] = [];
+    for (const { path, text } of sourceFiles()) {
+      for (const { openTag, full } of findIconOnlyButtons(text)) {
+        if (!/aria-label=|title=/.test(openTag)) hits.push(`${path}  ${full.slice(0, 80)}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+});
+
+describe('type discipline', () => {
+  it('uses size tokens, not literal px font sizes', () => {
+    expect(findAll(/font-size: *\d+px/g)).toEqual([]);
+  });
+
+  it('never sets line-height below the Thai floor where user text can land', () => {
+    // line-height: 1 clips Thai tone marks. Chrome-only rows may use
+    // --leading-tight; anything else must be >= 1.5.
+    expect(findAll(/line-height: *(?:1|1\.[0-4]\d*) *;/g)).toEqual([]);
+  });
+
+  it('uses the mono token, not an ad-hoc monospace stack', () => {
+    // Matches any font-family whose value is not `inherit` or a var().
+    // NOTE: `[^;]+` alone lets the engine backtrack the ` *` down to zero
+    // spaces so the lookahead is checked *before* the space, then the space
+    // itself gets swallowed by `[^;]+` -- silently defeating the negative
+    // lookahead and flagging `font-family: inherit;` and `var(--font-mono)`
+    // as violations. `\S[^;]*` forces the value to start on a non-space
+    // character at the exact position the lookahead examined.
+    expect(findAll(/font-family: *(?!inherit|var\()\S[^;]*;/g)).toEqual([]);
+  });
+
+  it('uses only font weights the app bundles, through the weight tokens', () => {
+    // src/main.ts bundles IBM Plex Sans Thai at 400/600/700, Latin and Thai
+    // glyphs both. Any other weight is not a face the app ships: a 500
+    // silently renders as 400, so the emphasis it was written for never
+    // appears. A weight bundled for Latin but not Thai is worse: the subset
+    // files carry no unicode-range, so Thai glyphs fall through to the OS
+    // Thai font, a different face on Mac, Windows and Android.
+    //
+    // So a weight is one of the three tokens (--weight-regular / -semibold /
+    // -bold, tokens.css), or inherit — never a number or a keyword, in
+    // `font-weight` or in the `font` shorthand. `!important` is allowed
+    // after it (it flagged a valid `600 !important` before, #281 review).
+    // Add a weight only together with BOTH its latin- and thai- imports in
+    // main.ts and a token. (Plex Mono also ships 500; add a token if a mono
+    // rule ever needs it.)
+    const hits = [...findAll(WEIGHT_DECL), ...findAll(FONT_SHORTHAND_WEIGHT)];
+    // Shared stylesheets imported by main.ts are outside sourceFiles(), the
+    // looks' (src/styles/looks/) included.
+    const sheets = [
+      ...readdirSync('src/styles').filter((f) => f.endsWith('.css') && f !== 'tokens.css'),
+      ...readdirSync('src/styles/looks').filter((f) => f.endsWith('.css')).map((f) => join('looks', f)),
+    ];
+    for (const name of sheets) {
+      const path = join('src/styles', name);
+      readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
+        for (const re of [WEIGHT_DECL, FONT_SHORTHAND_WEIGHT]) {
+          for (const m of line.matchAll(re)) hits.push(`${path}:${i + 1}  ${m[0]}`);
+        }
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+
+  // The guard's own patterns, on the cases the #281 review found it got
+  // wrong: a valid `!important` flagged, and the `font` shorthand unseen.
+  it('the weight patterns flag literals and pass tokens, with or without !important', () => {
+    const flags = (css: string) => [...css.matchAll(WEIGHT_DECL), ...css.matchAll(FONT_SHORTHAND_WEIGHT)].length > 0;
+    for (const ok of [
+      'font-weight: var(--weight-semibold);',
+      'font-weight: var(--weight-bold) !important;',
+      'font-weight: inherit;',
+      'font: inherit;',
+      'font: var(--weight-bold) var(--size) var(--font-sans);',
+      'font:inherit; cursor:pointer;',
+    ]) expect(flags(ok), ok).toBe(false);
+    for (const bad of [
+      'font-weight: 600;',
+      'font-weight: 600 !important;',
+      'font-weight: 500;',
+      'font-weight: bold;',
+      'font-weight: normal;',
+      'font: 500 13px var(--font-sans);',
+      'font: bold var(--size) var(--font-sans);',
+      'font: italic 600 12px/1.5 sans-serif;',
+    ]) expect(flags(bad), bad).toBe(true);
+  });
+
+  it('the weight tokens are exactly the bundled weights', () => {
+    const tokens = readFileSync('src/styles/tokens.css', 'utf8');
+    const value = (name: string) => [...new Set([...tokens.matchAll(new RegExp(`--weight-${name}: *(\\d+);`, 'g'))].map((m) => m[1]))];
+    expect(value('regular')).toEqual(['400']);
+    expect(value('semibold')).toEqual(['600']);
+    expect(value('bold')).toEqual(['700']);
+  });
+
+  // The pair above: a weight the guard allows must ship for both scripts,
+  // or Thai text at that weight silently changes font per platform. Every
+  // text face a look uses (src/styles/looks/) is held to it, not just Plex.
+  const TEXT_FACES = ['ibm-plex-sans-thai', 'bai-jamjuree', 'anuphan', 'noto-serif-thai'];
+  for (const face of TEXT_FACES) {
+    it(`bundles every ${face} weight for both Latin and Thai`, () => {
+      const main = readFileSync('src/main.ts', 'utf8');
+      const weights = (script: string) =>
+        [...main.matchAll(new RegExp(`${face}/${script}-(\\d+)\\.css`, 'g'))].map((m) => m[1]).sort();
+      expect(weights('thai')).toEqual(weights('latin'));
+      expect(weights('latin')).toEqual(['400', '600', '700']);
+    });
+  }
+
+  it('every face a look names is one main.ts bundles', () => {
+    // A family in a look's stack that nothing bundles falls through to the
+    // next one silently: the look would ship without its type.
+    const main = readFileSync('src/main.ts', 'utf8');
+    const bundled = new Set([...main.matchAll(/@fontsource\/([\w-]+)\//g)].map((m) => m[1]));
+    const missing: string[] = [];
+    for (const f of readdirSync('src/styles/looks').filter((x) => x.endsWith('.css'))) {
+      const css = readFileSync(join('src/styles/looks', f), 'utf8');
+      for (const m of css.matchAll(/--font-[a-z]+:\s*'([^']+)'/g)) {
+        const pkg = m[1].toLowerCase().replace(/\s+/g, '-');
+        if (!bundled.has(pkg)) missing.push(`${f}: ${m[1]}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
+describe('round-trip safety', () => {
+  it('never strips inline style from body_html on the frontend', () => {
+    // body_html round-trips to Apple Notes. Rewriting it is a correctness
+    // change, not a styling one. Inline styles are neutralised at RENDER
+    // time via a scoped .editor-body override -- never by mutating content.
+    const hits: string[] = [];
+    for (const { path, text } of sourceFiles()) {
+      for (const m of text.matchAll(/\.replace\([^)]*style[^)]*\)/gi)) {
+        hits.push(`${path}  ${m[0].slice(0, 100)}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+});
+
+describe('copy discipline', () => {
+  it('has no Thai in the shipped UI', () => {
+    // One language, decided 2026-07-29. Not a style preference: the UI was
+    // accidentally bilingual, so an English button opened a Thai screen.
+    // One exception, by name and by word: the brand mark (DESIGN.md, The
+    // Brand Mark Rule; brandMark.test.ts pins where it may appear).
+    expect(
+      findAll(/[฀-๿]+/gu).filter((h) => !/^src\/lib\/components\/BrandMark\.svelte:\d+  จด$/.test(h)),
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// form-control theming: the rule, as a pure function over source text.
+//
+// Exported and text-in/string-out on purpose. The previous version of this
+// guard lived entirely inside its `it()` and could only ever be pointed at the
+// real component tree, so there was no way to demonstrate it catching the bug
+// it existed for -- and it did not. See the fixture tests below.
+// ---------------------------------------------------------------------------
+
+// A form control with no `background` falls back to the USER AGENT's white,
+// which does not follow the theme. Inheriting is not an option here: the UA
+// stylesheet beats inheritance for input/select/textarea. So a control that
+// sets `color` (themed, light in dark mode) but no background renders light
+// text on a white field and becomes invisible.
+//
+// This shipped twice. First: Sidebar's new-folder prompt (no background at
+// all). Then, with the first version of this guard already in the tree, three
+// bare `<input placeholder=… bind:value=… />` in AppSettings' LLM section --
+// no class AND no type. The guard's element regex required `class="…"` to even
+// see a control, so those were invisible to it; and the stylesheet rule meant
+// to catch them, `input[type="text"], input[type="password"]`, is an ATTRIBUTE
+// selector, so it did not match an input that never declares `type` (defaulting
+// to text at runtime is a DOM behaviour, not an attribute). Guard and
+// stylesheet shared the same blind spot, which is why agreement between them
+// proved nothing.
+//
+// So the rule is now: every control must be matched by a selector in its own
+// component's <style> that ACTUALLY applies to it -- class, bare element, or
+// attribute selector whose conditions the markup satisfies -- and that selector
+// must declare a background.
+
+// UA-drawn widgets. The browser paints the box itself; `background` on them is
+// either ignored or cosmetic, and there is no text inside to lose contrast
+// with. These are the one exemption, and it is keyed on a LITERAL type
+// attribute -- a control whose type is an interpolated expression is not
+// assumed to be one of these.
+const UA_PAINTED_TYPES = new Set(['checkbox', 'radio', 'hidden', 'range', 'color', 'file']);
+
+type Control = { tag: string; line: number; open: string; classes: string[]; type: string | null };
+
+function styleBlock(text: string): string {
+  const m = /<style>([\s\S]*)<\/style>/.exec(text);
+  return m ? m[1].replace(/\/\*[\s\S]*?\*\//g, '') : '';
+}
+
+/** Literal value of `name="…"` / `name='…'`, or null when absent or interpolated. */
+function attrLiteral(openTag: string, name: string): string | null {
+  const m = new RegExp(`(?:^|[\\s])${name}=(?:"([^"]*)"|'([^']*)')`).exec(openTag);
+  return m ? (m[1] ?? m[2]) : null;
+}
+
+/**
+ * `text` with <script>, <style> and HTML-comment regions blanked out, keeping
+ * every newline so reported line numbers still match the file.
+ *
+ * Needed because these components discuss `<input>` in prose far more often
+ * than they render one: five of the first run's hits were sentences in comments
+ * ("Clicking a checkbox shifts focus to the <input>") and JS strings that build
+ * checkbox markup. A guard whose failure list is mostly commentary teaches
+ * people to skim past it.
+ */
+function markupOnly(text: string): string {
+  const blank = (s: string) => s.replace(/[^\n]/g, ' ');
+  return text
+    .replace(/<script[\s\S]*?<\/script>/g, blank)
+    .replace(/<style[\s\S]*?<\/style>/g, blank)
+    .replace(/<!--[\s\S]*?-->/g, blank);
+}
+
+/**
+ * Every input/select/textarea open tag in the MARKUP of `text`. Brace-aware
+ * (findTagEnd), so a `type={cond ? 'text' : 'password'}` or an inline arrow
+ * handler does not cut the tag short and hide later attributes.
+ */
+export function findFormControls(source: string): Control[] {
+  const text = markupOnly(source);
+  const out: Control[] = [];
+  const openRe = /<(input|select|textarea)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = openRe.exec(text))) {
+    const end = findTagEnd(text, m.index);
+    if (end === -1) continue;
+    const open = text.slice(m.index, end + 1);
+    // Static class tokens only. An interpolated token (`class="a {x}"`) cannot
+    // be resolved here, so it is not counted as coverage.
+    const classAttr = attrLiteral(open, 'class') ?? '';
+    out.push({
+      tag: m[1],
+      line: text.slice(0, m.index).split('\n').length,
+      open,
+      classes: classAttr.split(/\s+/).filter((c) => c && !c.includes('{')),
+      type: attrLiteral(open, 'type'),
+    });
+    openRe.lastIndex = end + 1;
+  }
+  return out;
+}
+
+/** `selector { decls }` pairs. Rules nested in @media are picked up too. */
+function cssRules(css: string): { selector: string; decls: string }[] {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selector: m[1].trim(),
+    decls: m[2],
+  }));
+}
+
+function declaresBackground(decls: string): boolean {
+  return /(?:^|[;{\s])background(?:-color)?\s*:/.test(decls);
+}
+
+/**
+ * Does `selector` apply to `ctl` in its BASE state?
+ *
+ * Only the rightmost compound is checked, so an ancestor requirement
+ * (`.toggle-row input`) is taken on trust: a background there counts as
+ * coverage even though we cannot confirm the control really sits inside
+ * `.toggle-row`. Deliberately lenient -- the strict alternative needs a real
+ * DOM, and a guard that cries wolf gets muted. The tight half is the part that
+ * matters: attribute and class conditions on the control ITSELF must be
+ * satisfied by the markup.
+ *
+ * Pseudo-classes and pseudo-elements disqualify the rule: a background on
+ * `:focus` or `::placeholder` does not paint the resting field.
+ */
+function selectorApplies(selector: string, ctl: Control): boolean {
+  return selector.split(',').some((alt) => {
+    const compound = alt.trim().split(/[\s>+~]+/).filter(Boolean).pop();
+    if (!compound || compound.includes(':')) return false;
+
+    const element = /^[a-zA-Z][\w-]*/.exec(compound)?.[0] ?? null;
+    if (element && element !== ctl.tag) return false;
+
+    const classes = [...compound.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+    if (!classes.every((c) => ctl.classes.includes(c))) return false;
+
+    // [type="text"] and friends: the markup must literally declare the
+    // attribute with that value. This is the check the old guard lacked.
+    for (const a of compound.matchAll(/\[([\w-]+)(?:([~|^$*]?=)"?([^\]"]*)"?)?\]/g)) {
+      const [, name, op, want] = a;
+      const have = attrLiteral(ctl.open, name);
+      if (have === null) return false;
+      if (op && op !== '=') return false; // ~= etc: not worth modelling, stay strict
+      if (op && have !== want) return false;
+    }
+
+    // A rule with no element, class or attribute is not something we can bind
+    // to this control (e.g. a bare `*`).
+    return Boolean(element || classes.length || compound.includes('['));
+  });
+}
+
+/**
+ * Sites in `text` whose background would come from the user agent.
+ *
+ * `globalCss` is App.svelte's style block, where the app-wide control rules
+ * live. Today it only grants form controls `color: inherit`, so it never
+ * satisfies anything -- but a future `:global(input) { background: … }` there
+ * would legitimately cover every control in the tree, and a guard that flagged
+ * all of them anyway would be wrong in the loudest possible way.
+ */
+export function uncoveredFormControls(text: string, globalCss = ''): string[] {
+  // `:global(button, input, …)` is Svelte syntax, not CSS -- unwrap it so the
+  // selector list inside is matched like any other.
+  const css = styleBlock(text) + '\n' + globalCss.replace(/:global\(([^)]*)\)/g, '$1');
+  const rules = cssRules(css).filter((r) => declaresBackground(r.decls));
+  const hits: string[] = [];
+  for (const ctl of findFormControls(text)) {
+    if (ctl.type && UA_PAINTED_TYPES.has(ctl.type)) continue;
+    if (/(?:^|\s)style="[^"]*background/.test(ctl.open)) continue;
+    if (rules.some((r) => selectorApplies(r.selector, ctl))) continue;
+    const desc = ctl.classes.length
+      ? `class="${ctl.classes.join(' ')}"`
+      : ctl.type
+        ? `type="${ctl.type}"`
+        : 'no class, no type';
+    hits.push(`:${ctl.line}  <${ctl.tag} ${desc}>`);
+  }
+  return hits;
+}
+
+describe('form-control theming', () => {
+  it('gives every input/select/textarea an explicit background', () => {
+    const files = sourceFiles();
+    const globalCss = styleBlock(files.find((f) => f.path === 'src/App.svelte')!.text);
+    const hits: string[] = [];
+    for (const { path, text } of files) {
+      for (const h of uncoveredFormControls(text, globalCss)) hits.push(path + h);
+    }
+    expect(hits).toEqual([]);
+  });
+
+  // The regression proof. Verbatim shape of the three AppSettings inputs added
+  // in a521078 (branch worktree-ask-jodd) that rendered themed near-white text
+  // on the UA's white field in dark mode, alongside the two controls in the
+  // same section that were fine. If this test ever passes, the guard has
+  // stopped being able to see the bug it exists for.
+  const PRE_FIX = `
+    <label>Preset
+      <input placeholder="claude" bind:value={appLlm.llm.agent_preset} />
+    </label>
+    <label>Provider
+      <select bind:value={appLlm.llm.provider}><option value="none">None</option></select>
+    </label>
+    <label>API key
+      <input type="password" placeholder="sk-…" bind:value={appLlmKeyInput} />
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" bind:checked={appLlm.apply_to_accounts} /> Also use for Extract
+    </label>
+    <style>
+      select {
+        width: 100%; padding: 6px 8px; background: var(--surface-panel); color: var(--text);
+      }
+      input[type="text"], input[type="password"] {
+        width: 100%; padding: 6px 8px; background: var(--surface-panel); color: var(--text);
+      }
+      .checkbox input { margin: 0; }
+    </style>`;
+
+  it('flags a bare input that no stylesheet selector actually matches', () => {
+    // The bare <input> only. `select` is covered by a bare element rule, the
+    // password field literally declares the type its selector requires, and the
+    // checkbox is UA-painted.
+    expect(uncoveredFormControls(PRE_FIX)).toEqual([':3  <input no class, no type>']);
+  });
+
+  it('passes once that input carries a class the stylesheet backgrounds', () => {
+    // The actual fix applied on worktree-ask-jodd: class="field".
+    const fixed = PRE_FIX
+      .replace('<input placeholder="claude"', '<input class="field" placeholder="claude"')
+      .replace('<style>', '<style>\n      .field { background: var(--surface-panel); color: var(--text); }');
+    expect(uncoveredFormControls(fixed)).toEqual([]);
+  });
+
+  it('accepts an app-wide :global control background as coverage', () => {
+    const bare = '<input />';
+    expect(uncoveredFormControls(bare)).toEqual([':1  <input no class, no type>']);
+    expect(
+      uncoveredFormControls(bare, ':global(input, textarea) { background: var(--surface-panel); }'),
+    ).toEqual([]);
+  });
+
+  it('does not accept a :focus-only background as covering the resting field', () => {
+    // A background that only exists on focus leaves the field UA-white until
+    // the user clicks it — the same invisible-text bug, one interaction later.
+    const focusOnly = `
+      <input class="field" type="text" />
+      <style>.field:focus { background: var(--surface-panel); }</style>`;
+    expect(uncoveredFormControls(focusOnly)).toEqual([':2  <input class="field">']);
+  });
+
+  // The mirror of the rule above, and the half that shipped the second wave of
+  // dark-mode bugs: `body` never set a colour, so everything that did not set
+  // its own inherited the user agent's BLACK. Light mode hid it by coincidence.
+  // App.svelte now sets `color` on body AND `color: inherit` on form controls
+  // (which do not inherit by default). This asserts both stay.
+  it('sets a themed colour on body and makes form controls inherit it', () => {
+    const app = sourceFiles().find((f) => f.path === 'src/App.svelte')!.text;
+    const body = /:global\(body\)\s*\{([^}]*)\}/.exec(app);
+    expect(body, ':global(body) rule not found in App.svelte').toBeTruthy();
+    expect(body![1], ':global(body) must set a themed colour').toMatch(/color:\s*var\(--/);
+
+    const controls = /:global\(\s*button\s*,\s*input\s*,\s*select\s*,\s*textarea\s*\)\s*\{([^}]*)\}/.exec(app);
+    expect(controls, 'form controls must be told to inherit colour').toBeTruthy();
+    expect(controls![1]).toMatch(/color:\s*(inherit|var\(--)/);
+  });
+
+});
+
+describe('truncation tooltips', () => {
+  // The connections-graph modal (NoteEditor.svelte) renders node labels
+  // through gtrunc(), which hard-clips to 16 chars -- there is no CSS
+  // ellipsis to inspect, and `title=` as an SVG attribute is inert (it must
+  // be a child <title> element for the browser's native tooltip to fire).
+  // This is the one truncation site in this batch that's precisely
+  // guardable: every `<g class="g-node ...">` block must carry a <title>
+  // child immediately, or hovering a truncated Thai/long label shows
+  // nothing. See docs/superpowers/sdd/2026-07-29-tier2-identity/tooltips-report.md
+  // for why the ~19 CSS text-overflow:ellipsis sites elsewhere are NOT
+  // guarded here: telling a dynamic value (note title, folder name) apart
+  // from a static English label (e.g. "-> Links to") needs markup context
+  // a regex over raw source can't reliably see, and a guard that flags
+  // static labels as missing tooltips would just teach people to ignore it.
+  it('gives every graph node group a <title> child for its hover tooltip', () => {
+    const hits: string[] = [];
+    for (const { path, text } of sourceFiles()) {
+      if (!text.includes('g-node')) continue;
+      for (const m of text.matchAll(/<g class="g-node[^>]*>[\s\S]*?<\/g>/g)) {
+        if (!/<title>/.test(m[0])) {
+          hits.push(`${path}  ${m[0].slice(0, 80).replace(/\n/g, ' ')}`);
+        }
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+});
+
+describe('graph node interaction', () => {
+  // Every node in the connections graph is actionable — notes open, folders
+  // navigate, tags filter. Previously only note nodes were, which read as a
+  // dead click on two thirds of the graph.
+  const editor = () => sourceFiles().find((f) => f.path === 'src/lib/components/NoteEditor.svelte')!.text;
+
+  it('makes every graph node clickable, not just the note ones', () => {
+    // Capture to the <title> child, NOT with [^>]* — the attribute list holds
+    // an arrow function, and its `=>` would end a [^>] match early.
+    const g = /<g\s+class="g-node g-\{gn\.kind\}([\s\S]*?)<title>/.exec(editor());
+    expect(g, 'graph node <g> not found').toBeTruthy();
+    // The old form gated interactivity on a note being present.
+    expect(g![1]).not.toMatch(/class:clickable=\{!!gn\.note\}/);
+    expect(g![1]).toMatch(/role="button"/);
+    expect(g![1]).toMatch(/tabindex="0"/);
+    expect(g![1]).toMatch(/onkeydown=/);
+    expect(g![1]).toMatch(/aria-label=/);
+  });
+
+  it('mirrors the sidebar mutual-exclusion rules when navigating from a node', () => {
+    // Folder / tag / Smart Folder views are mutually exclusive. A folder click
+    // must clear tags AND the Smart Folder AND search; a tag click must clear
+    // the Smart Folder. Diverging from Sidebar.selectFolder/selectTag would
+    // give the same destination two different behaviours. The folder branch
+    // leaves the Smart Folder through navigateToFolder, the one writer that
+    // clears it in the same step as it sets the folder.
+    const fn = /function openGraphNode\(gn: any\) \{[\s\S]*?\n  \}/.exec(editor());
+    expect(fn, 'openGraphNode not found').toBeTruthy();
+    const body = fn![0];
+    expect(body).toMatch(/selectedSmartFolder\.set\(null\)/);
+    expect(body).toMatch(/clearSelectedTags\(\)/);
+    expect(body).toMatch(/searchQuery\.set\(''\)/);
+    expect(body).toMatch(/navigateToFolder\(/);
+    expect(body).toMatch(/toggleSelectedTag\(/);
+    // Tag labels carry a display '#'; the store holds bare tags.
+    expect(body).toMatch(/replace\(\/\^#\/, ''\)/);
+  });
+});
+
+describe('icon accents and body-background narrowing', () => {
+  const icon = () => sourceFiles().find((f) => f.path === 'src/lib/components/Icon.svelte')!.text;
+  const editorText = () => sourceFiles().find((f) => f.path === 'src/lib/components/NoteEditor.svelte')!.text;
+
+  it('sets semantic icon colours centrally, not at the call sites', () => {
+    // 13 call sites use trash/pin/tag. Colouring them individually means the
+    // 14th drifts. The map lives in Icon.svelte so the value is stated once.
+    const t = icon();
+    expect(t).toMatch(/const ACCENT/);
+    expect(t).toMatch(/trash:\s*'var\(--icon-danger\)'/);
+    expect(t).toMatch(/pin:\s*'var\(--icon-pin\)'/);
+    expect(t).toMatch(/tag:\s*'var\(--icon-tag\)'/);
+    // Must actually reach the rendered SVG, not just be declared.
+    expect(t).toMatch(/stroke=\{stroke\}/);
+  });
+
+  it('does not reuse --graph-tag as the tag icon colour', () => {
+    // --graph-tag is picked for Lab dE separation inside the graph and
+    // measures 2.12:1 as a stroke on a selected sidebar row — it fails
+    // WCAG 1.4.11's 3:1 for a non-text graphic. Same hue family, different
+    // job. Reusing it would silently ship a failing contrast.
+    expect(icon()).not.toMatch(/tag:\s*'var\(--graph-tag\)'/);
+  });
+
+  it('neutralises only near-white note backgrounds, never every background', () => {
+    // The blanket [style*='background-color'] rule also erased a highlight the
+    // user deliberately applied in Apple Notes — content, by the same argument
+    // that preserves `color`. Enumerated because CSS cannot do luminance
+    // maths, and JS is not an option: .editor-body is the contenteditable
+    // whose innerHTML is saved, so mutating its DOM would write back to
+    // body_html and out to Apple Notes.
+    const t = editorText();
+    expect(t, 'blanket background-color override must not return')
+      .not.toMatch(/\[style\*='background-color'\]/);
+    for (const v of ['rgb(255, 255, 255)', 'rgb(253, 253, 252)', 'rgba(10, 10, 10, 0.0']) {
+      expect(t, `near-white ${v} must still be neutralised`).toContain(`background-color: ${v}`);
+    }
+  });
+});
+
+
+/**
+ * A dialog whose content outgrows the window must be able to scroll.
+ *
+ * The overlay is `position: fixed; inset: 0` and centres its child, so a panel
+ * taller than the viewport does not push the page down and is not clipped into
+ * any scrollable ancestor: it overflows at BOTH ends at once and the wheel has
+ * nothing to act on. The user cannot reach the top of the form or the Save
+ * button at the bottom, and nothing on screen explains why. App Settings hit
+ * exactly this once it grew an OAuth section, an LLM-provider form and a
+ * diagnostics block — content grows, so this is a guard, not a one-line fix.
+ *
+ * Deliberately checked per COMPONENT, not per element. Where the containment
+ * belongs varies legitimately: AskJoddModal bounds `.modal` and scrolls the
+ * turn list inside it; LinkSuggestionsModal bounds the panel and scrolls
+ * `.body`; three components put `role="dialog"` on the full-bleed overlay
+ * itself, which correctly has no max-height at all. Pinning a specific element
+ * would flag all of those while catching nothing. What is never legitimate is
+ * a dialog component with no bound and no scroller anywhere — that panel can
+ * only grow until it is unusable.
+ */
+describe('modal scrolling', () => {
+  it('gives every dialog component somewhere to scroll', () => {
+    const unscrollable: string[] = [];
+    for (const { path, text } of sourceFiles()) {
+      if (!/(?:role="dialog"|<dialog[\s>])/.test(markupOnly(text))) continue;
+      const css = styleBlock(text);
+      const bounded = /max-height\s*:/.test(css);
+      // The `overflow` shorthand counts; `overflow-x` alone does not.
+      const scrolls = /overflow(-y)?\s*:\s*(auto|scroll)/.test(css);
+      if (!bounded || !scrolls) {
+        const missing = [!bounded && 'max-height', !scrolls && 'overflow-y']
+          .filter(Boolean)
+          .join(' + ');
+        unscrollable.push(`${path}  no ${missing}`);
+      }
+    }
+    expect(unscrollable).toEqual([]);
+  });
+});
+
+/**
+ * One dialog primitive (spec 2026-10-20 §4.1): Modal owns the native
+ * <dialog> + showModal() — inertness, the top layer, focus return, the dirty
+ * guard and the Android Back entry — and Popover owns anchored menus. A
+ * component that calls showModal() or paints its own role="dialog" overlay
+ * escapes all of that. AppSettings and AccountSettings, the last legacy
+ * overlays, became Settings on Modal (Task 3.4); nothing else is allowed.
+ */
+describe('only Modal/Popover own dialogs', () => {
+  it('no component but Modal calls showModal() or declares role="dialog"', () => {
+    const ALLOWED = ['Modal.svelte'];
+    const owners = sourceFiles()
+      .filter(({ path }) => !ALLOWED.some((f) => path.endsWith(`/${f}`) || path.endsWith(`\\${f}`)))
+      .filter(({ text }) => /showModal\(|role="dialog"/.test(text))
+      .map(({ path }) => path);
+    expect(owners).toEqual([]);
+  });
+});
+
+/**
+ * Raw `px` in padding, margin or gap is how spacing drifts off the scale. The
+ * existing tree is grandfathered by a baseline that may only shrink; files
+ * created by the 2026-10-20 mobile navigation plan must use tokens only.
+ */
+export function countRawSpacing(): { total: number; byFile: Record<string, number> } {
+  const re = /\b(padding|margin|gap)[\w-]*\s*:[^;]*\d+px/g;
+  const byFile: Record<string, number> = {};
+  let total = 0;
+  for (const { path, text } of sourceFiles()) {
+    const n = [...styleBlock(text).matchAll(re)].length;
+    if (n > 0) byFile[path] = n;
+    total += n;
+  }
+  return { total, byFile };
+}
+
+describe('spacing discipline', () => {
+  it('never adds raw px spacing beyond the baseline', () => {
+    const baseline = JSON.parse(
+      readFileSync('src/lib/__fixtures__/raw-spacing-baseline.json', 'utf8'),
+    );
+    expect(countRawSpacing().total).toBeLessThanOrEqual(baseline.total);
+  });
+
+  it('files created by the 2026-10-20 plan use tokens only', () => {
+    const NEW = [
+      'Modal.svelte', 'Popover.svelte', 'PaneHeader.svelte', 'Settings.svelte',
+      'TagsPopover.svelte', 'NoteMoreMenu.svelte', 'FormatBar.svelte',
+      'HashtagPicker.svelte', 'ConnectionsDisclosure.svelte', 'EditorMetaLine.svelte',
+      'settings/AppearancePage.svelte', 'settings/AboutPage.svelte', 'settings/AccountsPage.svelte', 'settings/AccountPage.svelte',
+      'settings/AiPage.svelte', 'settings/DataPage.svelte', 'settings/SpeechPage.svelte',
+      'settings/data/WhereDataGoes.svelte', 'settings/data/AiAccess.svelte', 'settings/data/Records.svelte',
+      'settings/SharePage.svelte', 'settings/AdvancedPage.svelte', 'settings/SaveError.svelte',
+    ];
+    const { byFile } = countRawSpacing();
+    expect(NEW.filter((f) => (byFile[`src/lib/components/${f}`] ?? 0) > 0)).toEqual([]);
+  });
+});
+
+/**
+ * Explanatory copy rule (spec §4.4): one line of help under a label, the rest
+ * behind an inline "Learn more" disclosure. Covers every Settings page and the
+ * components those pages render.
+ */
+const SETTINGS_COPY_FILES = [
+  'Settings.svelte',
+  ...readdirSync(join(COMPONENT_DIR, 'settings'))
+    .filter((f) => f.endsWith('.svelte'))
+    .map((f) => `settings/${f}`),
+  ...readdirSync(join(COMPONENT_DIR, 'settings', 'data'))
+    .filter((f) => f.endsWith('.svelte'))
+    .map((f) => `settings/data/${f}`),
+  'LlmProviderSettings.svelte', 'AiHostPanel.svelte', 'AiLimits.svelte', 'AiReceipts.svelte',
+  'SpeechToTextSettings.svelte', 'AgentWorkspaceSettings.svelte',
+];
+
+const MAX_HELP = 110;
+
+/** The markup only: no script, style or comments. */
+function markupOf(text: string): string {
+  return text
+    .replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/<style[\s\S]*?<\/style>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+}
+
+/** The visible text of a snippet: tags and `{...}` blocks and expressions removed. */
+function plainText(html: string): string {
+  return html
+    .replace(/\{[#:/@][^}]*\}/g, '')
+    .replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&[a-z]+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+describe('explanatory copy', () => {
+  const files = SETTINGS_COPY_FILES.map((f) => {
+    const path = join(COMPONENT_DIR, f);
+    return { f, markup: markupOf(readFileSync(path, 'utf8')) };
+  });
+
+  it('settings help text is one line', () => {
+    const long: string[] = [];
+    for (const { f, markup } of files) {
+      // Anything that explains: a <p>, or any element wearing the help class.
+      // What sits inside a Learn more disclosure is exempt, so cut it out first.
+      const outside = markup.replace(/<details class="learn-more"[\s\S]*?<\/details>/g, '');
+      const re = /<(p|span|small)\b([^>]*)>([\s\S]*?)<\/\1>/g;
+      for (const m of outside.matchAll(re)) {
+        const isHelp = m[1] === 'p' || /\bclass="[^"]*\bhelp\b/.test(m[2]);
+        if (!isHelp) continue;
+        const text = plainText(m[3]);
+        if (text.length > MAX_HELP) long.push(`${f}  (${text.length})  ${text.slice(0, 70)}…`);
+      }
+    }
+    expect(long).toEqual([]);
+  });
+
+  it('uses the help class, not the older hint classes', () => {
+    const old = files
+      .filter(({ markup }) => /class="[^"]*\b(hint|field-hint)\b/.test(markup))
+      .map(({ f }) => f);
+    expect(old).toEqual([]);
+  });
+
+  it('every Learn more disclosure is a <details> with a "Learn more" summary', () => {
+    const bad: string[] = [];
+    for (const { f, markup } of files) {
+      for (const m of markup.matchAll(/<details class="learn-more"[^>]*>\s*([\s\S]*?)<\/details>/g)) {
+        if (!/^<summary>Learn more<\/summary>/.test(m[1])) bad.push(f);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps the long explanations: Settings has Learn more disclosures', () => {
+    const count = files.reduce((n, { markup }) => n + (markup.match(/<details class="learn-more"/g) ?? []).length, 0);
+    expect(count).toBeGreaterThanOrEqual(15);
+  });
+});
+
+// The #281 review's skipped items, pinned (follow-up to the editor design pass).
+describe('one rule per shared shape, opaque badges', () => {
+  const css = (path: string) => {
+    const s = readFileSync(path, 'utf8');
+    return s.slice(s.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '');
+  };
+  const block = (path: string, selector: string) =>
+    [...css(path).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => m[1].split(',').map((x) => x.trim()).includes(selector))
+      .map((m) => m[2])
+      .join('\n');
+
+  it('the three sign-in buttons share one rule, with the button radius token', () => {
+    const path = 'src/lib/components/AuthScreen.svelte';
+    const markup = readFileSync(path, 'utf8');
+    for (const provider of ['google-btn', 'microsoft-btn', 'icloud-btn']) {
+      expect(markup, provider).toMatch(new RegExp(`class="signin-btn ${provider}"`));
+      // No per-provider copy of the shape: only the spacing between them.
+      expect(block(path, `.${provider}`), provider).not.toMatch(/border-radius|padding|background/);
+    }
+    expect(block(path, '.signin-btn')).toMatch(/border-radius:\s*var\(--radius\)/);
+    expect(css(path)).not.toMatch(/border-radius:\s*8px/);
+  });
+
+  it('the duplicate pill is opaque in both its states (The Overlaid Contrast Rule)', () => {
+    // Since spec 2026-11-10 the duplicates are a notice row under the account,
+    // and its Review button is a neutral `.notice-action` (amber is for what
+    // the user touched, not for an action).
+    const path = 'src/lib/components/Sidebar.svelte';
+    const translucent = /background:\s*var\(--(accent-wash|accent-wash-strong|surface-sunken|surface-hover|surface-active)\)/;
+    for (const sel of ['.notice-action', '.notice-action:hover', '.dup-pill.result']) {
+      expect(block(path, sel), sel).not.toMatch(translucent);
+    }
+    expect(block(path, '.notice-action')).toMatch(/background:\s*var\(--surface-badge\)/);
+    expect(block(path, '.notice-action')).toMatch(/color:\s*var\(--text\)/);
+  });
+});
+
+// Polish pass (2026-11-09 workspace review, P3 "system debt"): radii, layers,
+// type sizes, glyph icons and debug output were each written by hand in
+// places the tokens already covered. These hold the line.
+describe('system tokens', () => {
+  const STYLES = [
+    'src/styles/sheet-menu.css',
+    ...readdirSync('src/styles/looks').filter((f) => f.endsWith('.css')).map((f) => join('src/styles/looks', f)),
+  ].map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+  const scan = (re: RegExp) => {
+    const hits = findAll(re);
+    for (const { path, text } of STYLES) {
+      text.split('\n').forEach((line, i) => { for (const m of line.matchAll(re)) hits.push(`${path}:${i + 1}  ${m[0]}`); });
+    }
+    return hits;
+  };
+
+  // DESIGN.md's rounded scale is 4/6/10 (--radius-sm/--radius/--radius-lg),
+  // chips and pills included. 0 and 50% are geometry, not a step.
+  const RADIUS = /border(?:-[a-z]+)*-radius:(?!(?:\s*(?:0|var\(--radius[\w-]*\)))+\s*;|\s*50%;)[^;]+;/g;
+  it('rounds corners with the radius tokens only', () => {
+    expect(scan(RADIUS)).toEqual([]);
+  });
+  it('the radius pattern flags literals and passes tokens', () => {
+    expect('border-radius: 8px;'.match(RADIUS)).not.toBeNull();
+    expect('border-top-left-radius: 3px;'.match(RADIUS)).not.toBeNull();
+    expect('border-radius: 999px;'.match(RADIUS)).not.toBeNull();
+    expect('border-radius: var(--radius) 0 0 var(--radius);'.match(RADIUS)).toBeNull();
+    expect('border-radius: 0 var(--radius) var(--radius) 0;'.match(RADIUS)).toBeNull();
+    expect('border-radius: 0 6px 6px 0;'.match(RADIUS)).not.toBeNull();
+    expect('border-radius: 50%;'.match(RADIUS)).toBeNull();
+  });
+
+  // tokens.css orders the layers. A local 0/1/-1 stacks inside a component
+  // and is not a layer.
+  const LAYER = /z-index:(?!\s*(?:var\(--z-|calc\(var\(--z-|-?[01];|auto;))[^;]+;/g;
+  it('stacks with the layer tokens only', () => {
+    expect(scan(LAYER)).toEqual([]);
+  });
+  it('the layer pattern flags literals and passes tokens', () => {
+    expect('z-index: 1000;'.match(LAYER)).not.toBeNull();
+    expect('z-index: 900;'.match(LAYER)).not.toBeNull();
+    expect('z-index: calc(var(--z-popover) + 1);'.match(LAYER)).toBeNull();
+    expect('z-index: 1;'.match(LAYER)).toBeNull();
+  });
+
+  // em stays legal: inline code is sized against the text around it.
+  it('sizes type with the size tokens, never rem', () => {
+    expect(scan(/font-size:\s*[\d.]+rem/g)).toEqual([]);
+  });
+
+  // A glyph is a character in the user's font, not an icon: it changes
+  // weight and size with the font and sits off the icons' stroke. The
+  // folder separator in the meta line is typography and stays.
+  // ＋ ● ○ since spec 2026-11-10: the Sidebar's add actions and account dots.
+  const LONE_GLYPH = /(<\/?button\b[^>]*>|class="icon"[^>]*>|class="account-[a-z-]*dot"[^>]*>)\s*[‹›×⋯✕✓▸▾←→＋●○☰]\s*</u;
+  it('draws control icons with <Icon>, not glyphs', () => {
+    const hits: string[] = [];
+    for (const { path, text } of sourceFiles()) {
+      text.split('\n').forEach((line, i) => {
+        if (LONE_GLYPH.test(line) || /^\s*>[‹›×⋯✕✓▸▾←→☰]/u.test(line)) hits.push(`${path}:${i + 1}  ${line.trim().slice(0, 80)}`);
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+  it('the glyph pattern flags a glyph button and passes an icon one', () => {
+    expect(LONE_GLYPH.test('<span class="icon" aria-hidden="true">‹</span>')).toBe(true);
+    expect(/^\s*>[‹›×⋯✕✓▸▾←→]<\/button>/u.test('      >×</button>')).toBe(true);
+    expect(LONE_GLYPH.test('<span class="icon"><Icon name="chevron-left" /></span>')).toBe(false);
+    expect(LONE_GLYPH.test('<span class="icon">＋</span>')).toBe(true);
+    expect(LONE_GLYPH.test('<span class="account-row-dot">●</span>')).toBe(true);
+    // A glyph that opens a button's content, even with markup after it (the
+    // old tablet ☰ carried its dot inside the button).
+    expect(/^\s*>[‹›×⋯✕✓▸▾←→☰]/u.test('    >☰{#if x}<span class="nav-dot"></span>{/if}</button>')).toBe(true);
+    expect(/^\s*>[‹›×⋯✕✓▸▾←→☰]/u.test('    ><Icon name="menu" size={20} /></button>')).toBe(false);
+  });
+
+  // The [jodd]-prefixed lines are the diagnostics live passes read; anything
+  // else is debug output left behind.
+  it('logs only [jodd] diagnostics', () => {
+    expect(findAll(/console\.log\((?!\s*[`'"]\[jodd\])/g)).toEqual([]);
+  });
+});

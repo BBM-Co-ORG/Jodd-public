@@ -1,0 +1,17 @@
+[
+  {"name":"emoji","text":"ship 📅 2026-11-25","due":"2026-11-25"},
+  {"name":"emoji_vs16","text":"ship 📅️ 2026-11-25","due":"2026-11-25"},
+  {"name":"due_word","text":"ship due: 2026-11-25","due":"2026-11-25"},
+  {"name":"due_upper","text":"ship DUE: 2026-11-25","due":"2026-11-25"},
+  {"name":"last_wins","text":"a 📅 2026-11-01 b 📅 2026-11-03","due":"2026-11-03"},
+  {"name":"mixed_last_wins","text":"a due: 2026-11-09 b 📅 2026-11-03","due":"2026-11-03"},
+  {"name":"non_iso","text":"📅 25/11","due":null},
+  {"name":"leading_space","text":" ship 📅 2026-11-25","due":"2026-11-25"},
+  {"name":"nbsp_after_emoji","text":"ship 📅 2026-11-25","due":"2026-11-25"},
+  {"name":"no_date","text":"ship it","due":null},
+  {"name":"due_after_length_changing_lowercase","text":"\u0130stanbul trip due: 2026-11-25","due":"2026-11-25"},
+  {"name":"impossible_date","text":"📅 2026-02-30","due":null},
+  {"name":"due_word_boundary","text":"overdue: 2026-11-25","due":null},
+  {"name":"trailing_digit_rejected","text":"\ud83d\udcc5 2026-11-250","due":null},
+  {"name":"due_no_space","text":"due:2026-11-25","due":"2026-11-25"}
+]
